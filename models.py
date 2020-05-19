@@ -120,35 +120,54 @@ class Attention(nn.Module):
         super(Attention, self).__init__()
         self.hidden_size = hidden_size
 
-        self.attn = nn.Linear(2 * self.hidden_size, self.hidden_size)
+        if config.use_coverage:
+            self.attn = nn.Linear(3 * self.hidden_size, self.hidden_size)
+        else:
+            self.attn = nn.Linear(2 * self.hidden_size, self.hidden_size)
         self.v = nn.Parameter(torch.rand(self.hidden_size), requires_grad=True)   # [H]
         stdv = 1. / math.sqrt(self.v.size(0))
         self.v.data.normal_(mean=0, std=stdv)
 
-    def forward(self, hidden, encoder_outputs):
+        if config.use_coverage:
+            self.coverage_feature = nn.Linear(1, self.hidden_size, bias=False)
+
+    def forward(self, hidden, encoder_outputs, coverage=None):
         """
         forward the net
         :param hidden: the last hidden state of encoder, [1, B, H]
         :param encoder_outputs: [T, B, H]
+        :param coverage: coverage vector, [B, T]
         :return: softmax scores, [B, 1, T]
         """
         time_step, batch_size, _ = encoder_outputs.size()
+
+        coverage_feature = None
+        if config.use_coverage:
+            coverage = coverage.view(-1, 1)     # [B*T, 1]
+            coverage_feature = self.coverage_feature(coverage)  # [B*T, H]
+
         h = hidden.repeat(time_step, 1, 1).transpose(0, 1)  # [B, T, H]
         encoder_outputs = encoder_outputs.transpose(0, 1)   # [B, T, H]
-        attn_energies = self.score(h, encoder_outputs)      # [B, T]
+        attn_energies = self.score(h, encoder_outputs, coverage_feature)
+
         return F.softmax(attn_energies, dim=1).unsqueeze(1)
 
-    def score(self, hidden, encoder_outputs):
+    def score(self, hidden, encoder_outputs, coverage=None):
         """
         calculate the attention scores of each word
         :param hidden: [B, T, H]
         :param encoder_outputs: [B, T, H]
+        :param coverage: coverage feature, [B, T, H]
         :return: energy: scores of each word in a batch, [B, T]
         """
         # after cat: [B, T, 2*H]
         # after attn: [B, T, H]
         # energy: [B, T, H]
-        energy = F.relu(self.attn(torch.cat([hidden, encoder_outputs], dim=2)))
+        if config.use_coverage:
+            energy = F.relu(self.attn(torch.cat([hidden, encoder_outputs, coverage], dim=2)))
+        else:
+            energy = F.relu(self.attn(torch.cat([hidden, encoder_outputs], dim=2)))
+
         energy = energy.transpose(1, 2)     # [B, H, T]
         v = self.v.repeat(encoder_outputs.size(0), 1).unsqueeze(1)      # [B, 1, H]
         energy = torch.bmm(v, energy)   # [B, 1, T]

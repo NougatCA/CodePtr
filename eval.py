@@ -202,6 +202,16 @@ class Test(object):
         total_candidates = []
         total_s_bleu = 0
         total_meteor = 0
+
+        out_file = None
+        if config.save_test_details:
+            try:
+                out_file = open(os.path.join(config.out_dir, 'test_details_{}.txt'.format(utils.get_timestamp())),
+                                encoding='utf-8',
+                                mode='w')
+            except IOError:
+                print('Test details file open failed.')
+
         for index_batch, batch in enumerate(self.dataloader):
             batch_size = batch[0].shape[1]
 
@@ -216,6 +226,16 @@ class Test(object):
                 utils.print_eval_progress(start_time=start_time, cur_time=cur_time, index_batch=index_batch,
                                           batch_size=batch_size, dataset_size=self.dataset_size,
                                           batch_s_bleu=s_blue_score, batch_meteor=meteor_score)
+
+            if config.save_test_details:
+                for index in range(len(references)):
+                    out_file.write(' '.join(['Reference:'] + references[index]) + '\n')
+                    out_file.write(' '.join(['Candidate:'] + candidates[index]) + '\n')
+                    out_file.write('\n')
+
+        if out_file:
+            out_file.flush()
+            out_file.close()
 
         # corpus level bleu score
         c_bleu = utils.corpus_bleu_score(references=total_references, candidates=total_candidates)

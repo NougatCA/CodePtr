@@ -41,6 +41,10 @@ nl_vocab_txt_path = 'nl_vocab.txt'
 if not os.path.exists(vocab_dir):
     os.makedirs(vocab_dir)
 
+out_dir = 'out/'    # other outputs dir
+if not os.path.exists(out_dir):
+    os.makedirs(out_dir)
+
 
 # device
 use_cuda = torch.cuda.is_available()
@@ -58,6 +62,7 @@ save_model_halfway = False
 save_model_every_epoch = False
 validate_during_train = True
 save_best_model = True
+save_test_details = True
 
 
 # limitations
