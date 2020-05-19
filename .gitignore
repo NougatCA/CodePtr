@@ -1,0 +1,8 @@
+/dataset_mini/
+/runs/
+/vocab/
+/.idea/
+/__pycache__/
+/model/
+/dataset/
+/test.py
