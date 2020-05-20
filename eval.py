@@ -168,12 +168,20 @@ class Test(object):
         :return:
         """
         with torch.no_grad():
-            nl_batch = batch[4]
+            _, code_seq_lens, _, ast_seq_lens, nl_batch, _ = batch
 
             # outputs: [T, B, H]
             # hidden: [1, B, H]
             code_outputs, ast_outputs, decoder_hidden = \
                 self.model(batch, batch_size, self.nl_vocab, is_test=True)
+
+            code_coverage = None
+            ast_coverage = None
+            if config.use_coverage:
+                code_lengths = max(code_seq_lens)
+                ast_lengths = max(ast_seq_lens)
+                code_coverage = torch.zeros((batch_size, code_lengths), device=config.device)  # [B, T]
+                ast_coverage = torch.zeros((batch_size, ast_lengths), device=config.device)
 
             # decode
             batch_sentences = self.beam_decode(batch_size=batch_size,

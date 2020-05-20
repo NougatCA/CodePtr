@@ -55,7 +55,7 @@ device = torch.device('cuda' if use_cuda else 'cpu')
 trim_vocab_min_count = False
 trim_vocab_max_size = True
 
-use_coverage = True
+use_coverage = False
 use_pointer_gen = False
 use_teacher_forcing = True
 use_check_point = False
@@ -83,7 +83,7 @@ embedding_dim = 256
 hidden_size = 256
 decoder_dropout_rate = 0.5
 teacher_forcing_ratio = 1
-batch_size = 16     # 32
+batch_size = 8     # 32
 code_encoder_lr = 0.01
 ast_encoder_lr = 0.01
 reduce_hidden_lr = 0.01

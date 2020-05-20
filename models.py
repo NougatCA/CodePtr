@@ -144,8 +144,8 @@ class Attention(nn.Module):
 
         coverage_feature = None
         if config.use_coverage:
-            coverage = coverage.view(-1, 1)     # [B*T, 1]
-            coverage_feature = self.coverage_feature(coverage)  # [B*T, H]
+            coverage = coverage.unsqueeze(2)     # [B, T, 1]
+            coverage_feature = self.coverage_feature(coverage)  # [B, T, H]
 
         h = hidden.repeat(time_step, 1, 1).transpose(0, 1)  # [B, T, H]
         encoder_outputs = encoder_outputs.transpose(0, 1)   # [B, T, H]
@@ -166,7 +166,7 @@ class Attention(nn.Module):
         :param coverage: coverage feature, [B, T, H]
         :return: energy: scores of each word in a batch, [B, T]
         """
-        # after cat: [B, T, 2*H]
+        # after cat: [B, T, 3*H]
         # after attn: [B, T, H]
         # energy: [B, T, H]
         if config.use_coverage:
@@ -199,7 +199,8 @@ class Decoder(nn.Module):
         init_linear_wt(self.out)
 
     def forward(self, inputs: torch.Tensor, last_hidden: torch.Tensor,
-                code_outputs: torch.Tensor, ast_outputs: torch.Tensor, coverage=None) \
+                code_outputs: torch.Tensor, ast_outputs: torch.Tensor,
+                code_coverage=None, ast_coverage=None) \
             -> (torch.Tensor, torch.Tensor, torch.Tensor):
         """
         forward the net
@@ -207,7 +208,8 @@ class Decoder(nn.Module):
         :param last_hidden: last decoder hidden state, [1, B, H]
         :param code_outputs: outputs of code encoder, [T, B, H]
         :param ast_outputs: outputs of ast encoder, [T, B, H]
-        :param coverage: coverage vector, [B, T]
+        :param code_coverage: coverage vector, [B, T]
+        :param ast_coverage: coverage vector, [B, T]
         :return: output: [B, nl_vocab_size]
                 hidden: [1, B, H]
                 attn_weights: [B, 1, T]
@@ -218,20 +220,17 @@ class Decoder(nn.Module):
 
         code_attn_weights, code_coverage = self.code_attention(last_hidden,
                                                                code_outputs,
-                                                               coverage=coverage)  # [B, 1, T], [B, T]
+                                                               coverage=code_coverage)  # [B, 1, T], [B, T]
         code_context = code_attn_weights.bmm(code_outputs.transpose(0, 1))  # [B, 1, H]
         code_context = code_context.transpose(0, 1)     # [1, B, H]
 
         ast_attn_weights, ast_coverage = self.ast_attention(last_hidden,
                                                             ast_outputs,
-                                                            coverage=coverage)  # [B, 1, T], [B, T]
+                                                            coverage=ast_coverage)  # [B, 1, T], [B, T]
         ast_context = ast_attn_weights.bmm(ast_outputs.transpose(0, 1))     # [B, 1, H]
         ast_context = ast_context.transpose(0, 1)   # [1, B, H]
 
-        coverage = None
-        if config.use_coverage:
-            coverage = code_coverage + ast_coverage     # [B, T]
-        context = code_context + ast_context    # [1, B, H]
+        context = (code_context + ast_context) / 2    # [1, B, H]
 
         rnn_input = torch.cat([embedded, context], dim=2)   # [1, B, embedding_dim + H]
         outputs, hidden = self.gru(rnn_input, last_hidden)  # output: [1, B, H]
@@ -239,7 +238,7 @@ class Decoder(nn.Module):
         context = context.squeeze(0)    # [B, H]
         outputs = self.out(torch.cat([outputs, context], 1))    # [B, nl_vocab_size]
         outputs = F.log_softmax(outputs, dim=1)     # [B, nl_vocab_size]
-        return outputs, hidden, code_attn_weights, ast_attn_weights, coverage
+        return outputs, hidden, code_attn_weights, ast_attn_weights, code_coverage, ast_coverage
 
 '''
 class DecoderCatContext(nn.Module):
@@ -415,10 +414,13 @@ class Model(nn.Module):
             max_decode_step = min(config.max_decode_steps, max(nl_seq_lens))
 
         decoder_inputs = utils.init_decoder_inputs(batch_size=batch_size, vocab=nl_vocab)  # [B]
-        coverage = None
+        code_coverage = None
+        ast_coverage = None
         if config.use_coverage:
-
-            coverage = torch.zeros((batch_size, time_step), device=config.device)
+            code_lengths = max(code_seq_lens)
+            ast_lengths = max(ast_seq_lens)
+            code_coverage = torch.zeros((batch_size, code_lengths), device=config.device)     # [B, T]
+            ast_coverage = torch.zeros((batch_size, ast_lengths), device=config.device)
 
         batch_loss = 0
 
@@ -430,22 +432,32 @@ class Model(nn.Module):
             # attn_weights: [B, 1, T]
             # coverage: [B, T]
             decoder_output, decoder_hidden, \
-                code_attn_weights, ast_attn_weights, next_coverage = self.decoder(inputs=decoder_inputs,
-                                                                                  last_hidden=decoder_hidden,
-                                                                                  code_outputs=code_outputs,
-                                                                                  ast_outputs=ast_outputs,
-                                                                                  coverage=coverage)
+                code_attn_weights, ast_attn_weights, \
+                next_code_coverage, next_ast_coverage = self.decoder(inputs=decoder_inputs,
+                                                                     last_hidden=decoder_hidden,
+                                                                     code_outputs=code_outputs,
+                                                                     ast_outputs=ast_outputs,
+                                                                     code_coverage=code_coverage,
+                                                                     ast_coverage=ast_coverage)
             # decoder_outputs[step] = decoder_output
 
             step_loss = criterion(decoder_output, nl_batch[step])
             if config.use_coverage:
-                # ensure that the sum of attention weights is 1
-                attn_weights = (code_attn_weights + ast_attn_weights) / 2     # [B, 1, T]
-                attn_weights = attn_weights.squeeze(1)  # [B, T]
-                step_coverage_loss = torch.sum(torch.min(attn_weights, coverage), dim=1)    # [B]
-                step_coverage_loss = torch.sum(step_coverage_loss)
-                step_loss += step_coverage_loss
-                coverage = next_coverage.contiguous()
+
+                code_attn_weights = code_attn_weights.squeeze(1)    # [B, T]
+                ast_attn_weights = ast_attn_weights.squeeze(1)
+
+                code_coverage_loss = torch.sum(torch.min(code_attn_weights, code_coverage), dim=1)    # [B]
+                code_coverage_loss = torch.sum(code_coverage_loss)
+                ast_coverage_loss = torch.sum(torch.min(ast_attn_weights, ast_coverage), dim=1)    # [B]
+                ast_coverage_loss = torch.sum(ast_coverage_loss)
+
+                step_coverage_loss = (code_coverage_loss + ast_coverage_loss) / 2
+                step_loss = step_loss + config.coverage_loss_weight * step_coverage_loss
+
+                code_coverage = next_code_coverage.contiguous()
+                ast_coverage = next_ast_coverage.contiguous()
+
             batch_loss += step_loss
 
             if config.use_teacher_forcing and random.random() < config.teacher_forcing_ratio and not self.is_eval:
