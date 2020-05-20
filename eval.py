@@ -70,16 +70,17 @@ class Eval(object):
             # code_batch and ast_batch: [T, B]
             # nl_batch is raw data, [B, T] in list
             # nl_seq_lens is None
-            nl_batch = batch[4]
 
-            decoder_outputs = self.model(batch, batch_size, self.nl_vocab)  # [T, B, nl_vocab_size]
+            # nl_batch = batch[4]
 
-            decoder_outputs = decoder_outputs.view(-1, config.nl_vocab_size)
-            nl_batch = nl_batch.view(-1)
+            loss = self.model(batch, batch_size, self.nl_vocab)  # [T, B, nl_vocab_size]
 
-            loss = criterion(decoder_outputs, nl_batch)
+            # decoder_outputs = decoder_outputs.view(-1, config.nl_vocab_size)
+            # nl_batch = nl_batch.view(-1)
 
-            return loss
+            # loss = criterion(decoder_outputs, nl_batch)
+
+            return loss.item()
 
     def eval_iter(self):
         """
@@ -90,10 +91,10 @@ class Eval(object):
         criterion = nn.NLLLoss(ignore_index=utils.get_pad_index(self.nl_vocab))
 
         for index_batch, batch in enumerate(self.dataloader):
-            batch_size = batch[0].shape[1]
+            target_length, batch_size = batch[4].size()
 
             loss = self.eval_one_batch(batch, batch_size, criterion=criterion)
-            epoch_loss += loss.item()
+            epoch_loss += loss / target_length
 
         avg_loss = epoch_loss / len(self.dataloader)
 

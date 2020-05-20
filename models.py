@@ -138,6 +138,7 @@ class Attention(nn.Module):
         :param encoder_outputs: [T, B, H]
         :param coverage: coverage vector, [B, T]
         :return: softmax scores, [B, 1, T]
+                coverage vector, [B, T]
         """
         time_step, batch_size, _ = encoder_outputs.size()
 
@@ -149,8 +150,13 @@ class Attention(nn.Module):
         h = hidden.repeat(time_step, 1, 1).transpose(0, 1)  # [B, T, H]
         encoder_outputs = encoder_outputs.transpose(0, 1)   # [B, T, H]
         attn_energies = self.score(h, encoder_outputs, coverage_feature)
+        attn_weights = F.softmax(attn_energies, dim=1)      # [B, T]
 
-        return F.softmax(attn_energies, dim=1).unsqueeze(1)
+        if config.use_coverage:
+            coverage = coverage.view(-1, time_step)     # [B, T]
+            coverage = coverage + attn_weights
+
+        return attn_weights.unsqueeze(1), coverage
 
     def score(self, hidden, encoder_outputs, coverage=None):
         """
@@ -193,7 +199,7 @@ class Decoder(nn.Module):
         init_linear_wt(self.out)
 
     def forward(self, inputs: torch.Tensor, last_hidden: torch.Tensor,
-                code_outputs: torch.Tensor, ast_outputs: torch.Tensor) \
+                code_outputs: torch.Tensor, ast_outputs: torch.Tensor, coverage=None) \
             -> (torch.Tensor, torch.Tensor, torch.Tensor):
         """
         forward the net
@@ -201,21 +207,30 @@ class Decoder(nn.Module):
         :param last_hidden: last decoder hidden state, [1, B, H]
         :param code_outputs: outputs of code encoder, [T, B, H]
         :param ast_outputs: outputs of ast encoder, [T, B, H]
+        :param coverage: coverage vector, [B, T]
         :return: output: [B, nl_vocab_size]
                 hidden: [1, B, H]
                 attn_weights: [B, 1, T]
+                coverage: [B, T]
         """
         embedded = self.embedding(inputs).unsqueeze(0)      # [1, B, embedding_dim]
         # embedded = self.dropout(embedded)
 
-        code_attn_weights = self.code_attention(last_hidden, code_outputs)  # [B, 1, T]
+        code_attn_weights, code_coverage = self.code_attention(last_hidden,
+                                                               code_outputs,
+                                                               coverage=coverage)  # [B, 1, T], [B, T]
         code_context = code_attn_weights.bmm(code_outputs.transpose(0, 1))  # [B, 1, H]
         code_context = code_context.transpose(0, 1)     # [1, B, H]
 
-        ast_attn_weights = self.ast_attention(last_hidden, ast_outputs)  # [B, 1, T]
+        ast_attn_weights, ast_coverage = self.ast_attention(last_hidden,
+                                                            ast_outputs,
+                                                            coverage=coverage)  # [B, 1, T], [B, T]
         ast_context = ast_attn_weights.bmm(ast_outputs.transpose(0, 1))     # [B, 1, H]
         ast_context = ast_context.transpose(0, 1)   # [1, B, H]
 
+        coverage = None
+        if config.use_coverage:
+            coverage = code_coverage + ast_coverage     # [B, T]
         context = code_context + ast_context    # [1, B, H]
 
         rnn_input = torch.cat([embedded, context], dim=2)   # [1, B, embedding_dim + H]
@@ -224,9 +239,9 @@ class Decoder(nn.Module):
         context = context.squeeze(0)    # [B, H]
         outputs = self.out(torch.cat([outputs, context], 1))    # [B, nl_vocab_size]
         outputs = F.log_softmax(outputs, dim=1)     # [B, nl_vocab_size]
-        return outputs, hidden, code_attn_weights, ast_attn_weights
+        return outputs, hidden, code_attn_weights, ast_attn_weights, coverage
 
-
+'''
 class DecoderCatContext(nn.Module):
 
     def __init__(self, vocab_size, hidden_size=config.hidden_size):
@@ -282,6 +297,7 @@ class DecoderCatContext(nn.Module):
 
 
 class DecoderWithoutAttn(nn.Module):
+
     def __init__(self, vocab_size, hidden_size=config.hidden_size):
         super(DecoderWithoutAttn, self).__init__()
         self.hidden_size = hidden_size
@@ -317,6 +333,7 @@ class DecoderWithoutAttn(nn.Module):
         outputs = self.out(outputs)  # [B, nl_vocab_size]
         outputs = F.log_softmax(outputs, dim=1)  # [B, nl_vocab_size]
         return outputs, hidden, None, None
+'''
 
 
 class Model(nn.Module):
@@ -355,19 +372,17 @@ class Model(nn.Module):
             self.reduce_hidden.eval()
             self.decoder.eval()
 
-    def forward(self, batch, batch_size, nl_vocab, is_test=False):
+    def forward(self, batch, batch_size, nl_vocab, criterion=None, is_test=False):
         """
 
         :param batch:
         :param batch_size:
         :param nl_vocab:
+        :param criterion: None if no need to calculate loss
         :param is_test: if True, function will return before decoding
         :return: decoder_outputs: [T, B, nl_vocab_size]
         """
         # batch: [T, B]
-        # code_batch, code_seq_lens, code_pos, \
-        #     ast_batch, ast_seq_lens, ast_pos, \
-        #     nl_batch, nl_seq_lens = batch
         code_batch, code_seq_lens, ast_batch, ast_seq_lens, nl_batch, nl_seq_lens = batch
 
         # print(code_batch)
@@ -382,16 +397,6 @@ class Model(nn.Module):
         # hidden: [2, B, H]
         code_outputs, code_hidden = self.code_encoder(code_batch, code_seq_lens)
         ast_outputs, ast_hidden = self.ast_encoder(ast_batch, ast_seq_lens)
-        # print('encoder outputs shape:', code_outputs.shape, ast_outputs.shape)
-        # print('encoder hidden shape:', code_hidden.shape, ast_hidden.shape)
-
-        # restore the code outputs and ast outputs to match the sequence of nl
-        # code_outputs = utils.restore_encoder_outputs(code_outputs, code_pos)
-        # code_hidden = utils.restore_encoder_outputs(code_hidden, code_pos)
-        # ast_outputs = utils.restore_encoder_outputs(ast_outputs, ast_pos)
-        # ast_hidden = utils.restore_encoder_outputs(ast_hidden, ast_pos)
-        # print('restore outputs shape:', code_outputs.shape, ast_outputs.shape)
-        # print('restore hidden shape:', code_hidden.shape, ast_hidden.shape)
 
         # data for decoder
         code_hidden = code_hidden[:1]  # [1, B, H]
@@ -399,30 +404,49 @@ class Model(nn.Module):
         # decoder_hidden = torch.cat([code_hidden, ast_hidden], dim=2)    # [1, B, 2*H]
         decoder_hidden = self.reduce_hidden(code_hidden, ast_hidden)  # [1, B, H]
 
+        # if test, return before decode to beam decode or greedy decode
         if is_test:
             return code_outputs, ast_outputs, decoder_hidden
 
+        # nl_seq_lens is None when eval
         if nl_seq_lens is None:
-            max_decode_step = config.max_code_length
+            max_decode_step = config.max_decode_steps
         else:
-            max_decode_step = min(config.max_code_length, max(nl_seq_lens))
+            max_decode_step = min(config.max_decode_steps, max(nl_seq_lens))
 
         decoder_inputs = utils.init_decoder_inputs(batch_size=batch_size, vocab=nl_vocab)  # [B]
-        # print('decoder inputs shape:', decoder_inputs.shape)
-        # print('decoder hidden shape:', decoder_hidden.shape)
+        coverage = None
+        if config.use_coverage:
 
-        decoder_outputs = torch.zeros((max_decode_step, batch_size, config.nl_vocab_size), device=config.device)
+            coverage = torch.zeros((batch_size, time_step), device=config.device)
+
+        batch_loss = 0
+
+        # decoder_outputs = torch.zeros((max_decode_step, batch_size, config.nl_vocab_size), device=config.device)
 
         for step in range(max_decode_step):
             # decoder_outputs: [B, nl_vocab_size]
             # decoder_hidden: [1, B, H]
             # attn_weights: [B, 1, T]
+            # coverage: [B, T]
             decoder_output, decoder_hidden, \
-                code_attn_weights, ast_attn_weights = self.decoder(inputs=decoder_inputs,
-                                                                   last_hidden=decoder_hidden,
-                                                                   code_outputs=code_outputs,
-                                                                   ast_outputs=ast_outputs)
-            decoder_outputs[step] = decoder_output
+                code_attn_weights, ast_attn_weights, next_coverage = self.decoder(inputs=decoder_inputs,
+                                                                                  last_hidden=decoder_hidden,
+                                                                                  code_outputs=code_outputs,
+                                                                                  ast_outputs=ast_outputs,
+                                                                                  coverage=coverage)
+            # decoder_outputs[step] = decoder_output
+
+            step_loss = criterion(decoder_output, nl_batch[step])
+            if config.use_coverage:
+                # ensure that the sum of attention weights is 1
+                attn_weights = (code_attn_weights + ast_attn_weights) / 2     # [B, 1, T]
+                attn_weights = attn_weights.squeeze(1)  # [B, T]
+                step_coverage_loss = torch.sum(torch.min(attn_weights, coverage), dim=1)    # [B]
+                step_coverage_loss = torch.sum(step_coverage_loss)
+                step_loss += step_coverage_loss
+                coverage = next_coverage.contiguous()
+            batch_loss += step_loss
 
             if config.use_teacher_forcing and random.random() < config.teacher_forcing_ratio and not self.is_eval:
                 # use teacher forcing, ground truth to be the next input
@@ -433,7 +457,7 @@ class Model(nn.Module):
                 decoder_inputs = indices.squeeze(1).detach()  # [B]
                 decoder_inputs = decoder_inputs.to(config.device)
 
-        return decoder_outputs
+        return batch_loss
 
     def set_state_dict(self, state_dict):
         self.code_encoder.load_state_dict(state_dict["code_encoder"])
