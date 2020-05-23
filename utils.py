@@ -48,6 +48,7 @@ class Vocab(object):
         if self.trimmed:
             return
         self.trimmed = True
+
         keep_words = []
 
         # trim according to minimum count of words
@@ -270,12 +271,6 @@ def restore_encoder_outputs(outputs: torch.Tensor, pos) -> torch.Tensor:
     :param pos:
     :return:
     """
-    # old_outputs = outputs.clone().detach().cpu()
-    # old_outputs = old_outputs.transpose(0, 1)
-    # outputs = outputs.transpose(0, 1)
-    # for i, index in enumerate(pos):
-    #     outputs[index][:] = old_outputs[i][:]
-    # return outputs.transpose(0, 1)
     rev_pos = np.argsort(pos)
     outputs = torch.index_select(outputs, 1, torch.tensor(rev_pos, device=config.device))
     return outputs
@@ -420,9 +415,18 @@ def print_train_progress(start_time, cur_time, epoch, n_epochs, index_batch,
     print('\033[0;32mpercent complete\033[0m: {:6.2f}%, \033[0;31mavg loss\033[0m: {:.4f}'.format(
         percent_complete, loss))
 
+    config.logger.info('epoch: {}/{}, batch: {}/{}, avg loss: {:.4f}'.format(
+        epoch + 1, n_epochs, index_batch, n_iter - 1, loss))
+
 
 def plot_train_progress():
     pass
+
+
+def is_unk(word):
+    if word == _UNK:
+        return True
+    return False
 
 
 def is_special_symbol(word):
@@ -468,14 +472,14 @@ def sentence_bleu_score(reference, candidate) -> float:
     smoothing_function = nltk.translate.bleu_score.SmoothingFunction()
     return nltk.translate.bleu_score.sentence_bleu(references=[reference],
                                                    hypothesis=candidate,
-                                                   smoothing_function=smoothing_function.method1)
+                                                   smoothing_function=smoothing_function.method5)
 
 
 def corpus_bleu_score(references, candidates) -> float:
     smoothing_function = nltk.translate.bleu_score.SmoothingFunction()
     return nltk.translate.bleu_score.corpus_bleu(list_of_references=[[reference] for reference in references],
                                                  hypotheses=[candidate for candidate in candidates],
-                                                 smoothing_function=smoothing_function.method1)
+                                                 smoothing_function=smoothing_function.method5)
 
 
 def meteor_score(reference, candidate):
@@ -502,7 +506,7 @@ def ir_score():
     pass
 
 
-def print_eval_progress(start_time, cur_time, index_batch, batch_size, dataset_size, batch_s_bleu, batch_meteor):
+def print_test_progress(start_time, cur_time, index_batch, batch_size, dataset_size, batch_s_bleu, batch_meteor):
     spend = cur_time - start_time
     spend_h, spend_min, spend_s, spend_ms = to_time(spend)
 
@@ -530,6 +534,8 @@ def print_eval_progress(start_time, cur_time, index_batch, batch_size, dataset_s
 
 def print_test_scores(scores_dict):
     print('\nTest completed.', end=' ')
+    config.logger.info('Test completed.')
     for name, score in scores_dict.items():
         print('{}: {}.'.format(name, score), end=' ')
+        config.logger.info('{}: {}.'.format(name, score))
     print()

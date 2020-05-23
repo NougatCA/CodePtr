@@ -1,5 +1,7 @@
 import torch
 import os
+import time
+import logging
 
 
 # paths
@@ -46,6 +48,20 @@ if not os.path.exists(out_dir):
     os.makedirs(out_dir)
 
 
+# logger
+log_dir = 'log/'
+if not os.path.exists(log_dir):
+    os.makedirs(log_dir)
+
+logger = logging.getLogger()
+logger.setLevel(level=logging.INFO)
+handler = logging.FileHandler(os.path.join(log_dir, time.strftime('%Y%m%d_%H%M%S', time.localtime())) + '.log')
+handler.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s: %(message)s')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+
+
 # device
 use_cuda = torch.cuda.is_available()
 device = torch.device('cuda' if use_cuda else 'cpu')
@@ -59,10 +75,10 @@ use_coverage = False
 use_pointer_gen = False
 use_teacher_forcing = True
 use_check_point = False
+use_lr_decay = True
 
-save_model_halfway = False
-save_model_every_epoch = False
 validate_during_train = True
+save_valid_model = True
 save_best_model = True
 save_test_details = True
 
@@ -76,28 +92,28 @@ max_decode_steps = 30
 
 # hyperparameters
 vocab_min_count = 5
-code_vocab_size = 10000  # 30000
-nl_vocab_size = 10000    # 30000
+code_vocab_size = 6000  # 30000
+nl_vocab_size = 6000    # 30000
 
 embedding_dim = 256
 hidden_size = 256
 decoder_dropout_rate = 0.5
-teacher_forcing_ratio = 1
-batch_size = 8     # 32
-code_encoder_lr = 0.01
-ast_encoder_lr = 0.01
-reduce_hidden_lr = 0.01
-decoder_lr = 0.01
-n_epochs = 1    # 10
+teacher_forcing_ratio = 0.5
+batch_size = 8     # 128
+code_encoder_lr = 0.001
+ast_encoder_lr = 0.001
+reduce_hidden_lr = 0.001
+decoder_lr = 0.001
+lr_decay_every = 1
+lr_decay_rate = 0.99
+n_epochs = 3    # 50
 
 beam_width = 5
 beam_top_sentences = 1     # number of sentences beam decoder decode for one input
 eval_batch_size = 4    # 16
-
+test_batch_size = 4
 init_uniform_mag = 0.02
 init_normal_std = 1e-4
-
-coverage_loss_weight = 1.0
 
 
 # visualization and resumes
