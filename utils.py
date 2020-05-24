@@ -139,46 +139,49 @@ def load_dataset(dataset_path) -> list:
     return lines
 
 
-def filter_data(codes, asts, nls):
+def filter_data(sources, codes, asts, nls):
     """
     filter the data according to the rules
-    :param codes: list of tokens of source codes
+    :param sources: list of tokens of source codes
+    :param codes: list of tokens of split source codes
     :param asts: list of tokens of sequence asts
     :param nls: list of tokens of comments
     :return: filtered codes, asts and nls
     """
+    assert len(sources) == len(codes)
     assert len(codes) == len(asts)
     assert len(asts) == len(nls)
 
+    new_sources = []
     new_codes = []
     new_asts = []
     new_nls = []
     for i in range(len(codes)):
+        source = sources[i]
         code = codes[i]
         ast = asts[i]
         nl = nls[i]
+
         if len(code) > config.max_code_length or len(nl) > config.max_nl_length or len(nl) < config.min_nl_length:
             continue
+
+        new_sources.append(source)
         new_codes.append(code)
         new_asts.append(ast)
         new_nls.append(nl)
-    return new_codes, new_asts, new_nls
+    return new_sources, new_codes, new_asts, new_nls
 
 
-def init_vocab(name, lines, trim=False, min_count=None):
+def init_vocab(name, lines):
     """
     initialize the vocab by given name and dataset, trim if necessary
     :param name: name of vocab
     :param lines: dataset
-    :param trim: whether trim
-    :param min_count: minimum count of word
     :return: vocab
     """
     vocab = Vocab(name)
     for line in lines:
         vocab.add_sentence(line)
-    if trim:
-        vocab.trim(min_count)
     return vocab
 
 
@@ -251,6 +254,53 @@ def indices_from_batch(batch: list, vocab: Vocab) -> list:
     return indices
 
 
+def extend_indices_from_batch(source_batch: list, nl_batch: list, source_vocab: Vocab, nl_vocab: Vocab):
+    """
+
+    :param source_batch: [B, T]
+    :param nl_batch:
+    :param source_vocab:
+    :param nl_vocab:
+    :return:
+    """
+    extend_source_batch_indices = []   # [B, T]
+    extend_nl_batch_indices = []
+    batch_oovs = []     # list of list of oov words in sentences
+    for source, nl in zip(source_batch, nl_batch):
+
+        oovs = []
+        extend_source_indices = []
+        extend_nl_indices = []
+        oov_temp_index = {}     # maps the oov word to temp index
+
+        for word in source:
+            if word not in source_vocab.word2index:
+                if word not in oovs:
+                    oovs.append(word)
+                oov_index = oovs.index(word)
+                temp_index = len(source_vocab) + oov_index
+                extend_source_indices.append(temp_index)
+                oov_temp_index[word] = temp_index
+            else:
+                extend_source_indices.append(source_vocab.word2index[word])
+
+        for word in nl:
+            if word not in nl_vocab.word2index:
+                if word in oov_temp_index:      # in-source oov word
+                    temp_index = oov_temp_index[word]
+                    extend_nl_indices.append(temp_index)
+                else:
+                    extend_nl_indices.append(nl_vocab.word2index[_UNK])     # oov words not appear in the source code
+            else:
+                extend_nl_indices.append(nl_vocab.word2index[word])
+
+        extend_source_batch_indices.append(extend_source_indices)
+        extend_nl_batch_indices.append(extend_nl_indices)
+        batch_oovs.append(oovs)
+
+    return extend_source_batch_indices, extend_nl_batch_indices, batch_oovs
+
+
 def sort_batch(batch) -> (list, list, list):
     """
     sort one batch, return indices and sequence lengths
@@ -288,10 +338,10 @@ def get_eos_index(vocab: Vocab) -> int:
     return vocab.word2index[_EOS]
 
 
-def collate_fn(batch, code_vocab, ast_vocab, nl_vocab, is_eval=False) -> \
+def sort_collate_fn(batch, code_vocab, ast_vocab, nl_vocab, is_eval=False) -> \
         (torch.Tensor, list, list, torch.Tensor, list, list, torch.Tensor, list):
     """
-    process the batch
+    process the batch with sorting the batch
     :param batch: one batch, first dimension is batch, [B]
     :param code_vocab: [B, T]
     :param ast_vocab: [B, T]
@@ -333,44 +383,110 @@ def collate_fn(batch, code_vocab, ast_vocab, nl_vocab, is_eval=False) -> \
         nl_batch, nl_seq_lens
 
 
-def unsort_collate_fn(batch, code_vocab, ast_vocab, nl_vocab, raw_nl=False):
+class Batch(object):
+
+    def __init__(self, source_batch, source_seq_lens, code_batch, code_seq_lens,
+                 ast_batch, ast_seq_lens, nl_batch, nl_seq_lens):
+        self.source_batch = source_batch
+        self.source_seq_lens = source_seq_lens
+        self.code_batch = code_batch
+        self.code_seq_lens = code_seq_lens
+        self.ast_batch = ast_batch
+        self.ast_seq_lens = ast_seq_lens
+        self.nl_batch = nl_batch
+        self.nl_seq_lens = nl_seq_lens
+
+        self.batch_size = len(source_seq_lens)
+
+        # pointer gen
+        self.extend_source_batch = None
+        self.extend_nl_batch = None
+        self.max_oov_num = None
+        self.batch_oovs = None
+        self.extra_zeros = None
+
+    def get_regular_input(self):
+        return self.source_batch, self.source_seq_lens, self.code_batch, self.code_seq_lens, \
+               self.ast_batch, self.ast_seq_lens, self.nl_batch, self.nl_seq_lens
+
+    def config_point_gen(self, extend_source_batch_indices, extend_nl_batch_indices, batch_oovs,
+                         source_vocab, nl_vocab):
+        self.batch_oovs = batch_oovs
+        self.max_oov_num = max([len(oovs) for oovs in self.batch_oovs])
+
+        max_source_length = max([len(source) for source in extend_source_batch_indices])
+        self.extend_source_batch = torch.ones(
+            (self.batch_size, max_source_length), device=config.device) * source_vocab.word2index[_PAD]
+        self.extend_source_batch = self.extend_source_batch.long()  # [B, T]
+
+        # [T, B]
+        self.extend_nl_batch = pad_one_batch(extend_nl_batch_indices, nl_vocab)
+
+        if self.max_oov_num > 0:
+            # [B, max_oov_num]
+            self.extra_zeros = torch.zeros((self.batch_size, self.max_oov_num), device=config.device)
+
+    def get_pointer_gen_input(self):
+        return self.extend_source_batch, self.extend_nl_batch, self.extra_zeros
+
+
+def collate_fn(batch, source_vocab, code_vocab, ast_vocab, nl_vocab, raw_nl=False):
     """
     process the batch without sorting
     :param batch: one batch, first dimension is batch, [B]
-    :param code_vocab: [B, T]
+    :param source_vocab:
+    :param code_vocab:
     :param ast_vocab: [B, T]
     :param nl_vocab: [B, T]
     :param raw_nl: if True then nl_batch will not be translated and returns the raw data
     :return:
     """
     batch = batch[0]
+    source_batch = []
     code_batch = []
     ast_batch = []
     nl_batch = []
     for b in batch:
-        code_batch.append(b[0])
-        ast_batch.append(b[1])
-        nl_batch.append(b[2])
+        source_batch.append(b[0])
+        code_batch.append(b[1])
+        ast_batch.append(b[2])
+        nl_batch.append(b[3])
 
     # transfer words to indices including oov words, and append EOS token to each sentence, list
+    extend_source_batch_indices = None
+    extend_nl_batch_indices = None
+    batch_oovs = None
+    if config.use_pointer_gen and not raw_nl:
+        extend_source_batch_indices, extend_nl_batch_indices, batch_oovs = extend_indices_from_batch(source_batch,
+                                                                                                     nl_batch,
+                                                                                                     source_vocab,
+                                                                                                     nl_vocab)
+    else:
+        source_batch = indices_from_batch(source_batch, source_vocab)
+        nl_batch = indices_from_batch(nl_batch, nl_vocab)
     code_batch = indices_from_batch(code_batch, code_vocab)  # [B, T]
     ast_batch = indices_from_batch(ast_batch, ast_vocab)  # [B, T]
-    if not raw_nl:
-        nl_batch = indices_from_batch(nl_batch, nl_vocab)  # [B, T]
+    # if not raw_nl:
+    #     nl_batch = indices_from_batch(nl_batch, nl_vocab)  # [B, T]
 
+    source_seq_lens = get_seq_lens(source_batch)
     code_seq_lens = get_seq_lens(code_batch)
     ast_seq_lens = get_seq_lens(ast_batch)
     nl_seq_lens = get_seq_lens(nl_batch)
 
     # pad and transpose, [T, B], tensor
+    source_batch = pad_one_batch(source_batch, source_vocab)
     code_batch = pad_one_batch(code_batch, code_vocab)
     ast_batch = pad_one_batch(ast_batch, ast_vocab)
     if not raw_nl:
         nl_batch = pad_one_batch(nl_batch, nl_vocab)
 
-    return code_batch, code_seq_lens, \
-        ast_batch, ast_seq_lens, \
-        nl_batch, nl_seq_lens
+    batch = Batch(source_batch, source_seq_lens, code_batch, code_seq_lens,
+                  ast_batch, ast_seq_lens, nl_batch, nl_seq_lens)
+    if config.use_pointer_gen and not raw_nl:
+        batch.config_point_gen(extend_source_batch_indices, extend_nl_batch_indices, batch_oovs, source_vocab, nl_vocab)
+
+    return batch
 
 
 def to_time(float_time):

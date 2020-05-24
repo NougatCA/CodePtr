@@ -163,30 +163,43 @@ class Decoder(nn.Module):
 
         self.embedding = nn.Embedding(vocab_size, config.embedding_dim)
         self.dropout = nn.Dropout(config.decoder_dropout_rate)
+        self.source_attention = Attention()
         self.code_attention = Attention()
         self.ast_attention = Attention()
         self.gru = nn.GRU(config.embedding_dim + self.hidden_size, self.hidden_size)
         self.out = nn.Linear(2 * self.hidden_size, config.nl_vocab_size)
 
+        if config.use_pointer_gen:
+            self.p_gen_linear = nn.Linear(2 * self.hidden_size + config.embedding_dim, 1)
+
         init_wt_normal(self.embedding.weight)
         init_rnn_wt(self.gru)
         init_linear_wt(self.out)
 
-    def forward(self, inputs: torch.Tensor, last_hidden: torch.Tensor,
-                code_outputs: torch.Tensor, ast_outputs: torch.Tensor) \
+    def forward(self, inputs: torch.Tensor, last_hidden: torch.Tensor, source_outputs: torch.Tensor,
+                code_outputs: torch.Tensor, ast_outputs: torch.Tensor, extend_source_batch, extra_zeros) \
             -> (torch.Tensor, torch.Tensor, torch.Tensor):
         """
         forward the net
         :param inputs: word input of current time step, [B]
         :param last_hidden: last decoder hidden state, [1, B, H]
+        :param source_outputs: outputs of source encoder, [T, B, H]
         :param code_outputs: outputs of code encoder, [T, B, H]
         :param ast_outputs: outputs of ast encoder, [T, B, H]
+        :param extend_source_batch: [B, T]
+        :param extra_zeros: [B, max_oov_num]
         :return: output: [B, nl_vocab_size]
                 hidden: [1, B, H]
                 attn_weights: [B, 1, T]
         """
         embedded = self.embedding(inputs).unsqueeze(0)      # [1, B, embedding_dim]
         # embedded = self.dropout(embedded)
+
+        # get attn weights of source
+        # calculate and add source context in order to update attn weights during training
+        source_attn_weights = self.source_attention(last_hidden, source_outputs)  # [B, 1, T]
+        source_context = source_attn_weights.bmm(source_outputs.transpose(0, 1))  # [B, 1, H]
+        source_context = source_context.transpose(0, 1)  # [1, B, H]
 
         code_attn_weights = self.code_attention(last_hidden, code_outputs)  # [B, 1, T]
         code_context = code_attn_weights.bmm(code_outputs.transpose(0, 1))  # [B, 1, H]
@@ -196,35 +209,69 @@ class Decoder(nn.Module):
         ast_context = ast_attn_weights.bmm(ast_outputs.transpose(0, 1))     # [B, 1, H]
         ast_context = ast_context.transpose(0, 1)   # [1, B, H]
 
-        context = code_context + ast_context    # [1, B, H]
+        # make ratio between source code and construct is 1: 1
+        context = 0.5 * source_context + 0.5 * code_context + ast_context     # [1, B, H]
+
+        p_gen = None
+        if config.use_pointer_gen:
+            # calculate p_gen
+            p_gen_input = torch.cat([context, last_hidden, embedded])   # [1, B, 2*H+E]
+            p_gen = self.p_gen_linear(p_gen_input)
+            p_gen = F.sigmoid(p_gen)    # [1, B, 1]
 
         rnn_input = torch.cat([embedded, context], dim=2)   # [1, B, embedding_dim + H]
         outputs, hidden = self.gru(rnn_input, last_hidden)  # [1, B, H] for both
+
         outputs = outputs.squeeze(0)    # [B, H]
         context = context.squeeze(0)    # [B, H]
-        outputs = self.out(torch.cat([outputs, context], 1))    # [B, nl_vocab_size]
-        outputs = F.log_softmax(outputs, dim=1)     # [B, nl_vocab_size]
-        return outputs, hidden, code_attn_weights, ast_attn_weights
+
+        vocab_dist = self.out(torch.cat([outputs, context], 1))    # [B, nl_vocab_size]
+        vocab_dist = F.log_softmax(vocab_dist, dim=1)     # P_vocab, [B, nl_vocab_size]
+
+        if config.use_pointer_gen:
+            vocab_dist = p_gen * vocab_dist    # [B, V]
+            attn_dist = (1 - p_gen) * source_attn_weights  # [B, 1, T]
+            attn_dist = attn_dist.squeeze(1)        # [B, T]
+
+            # if has extra words
+            if extra_zeros is not None:
+                vocab_dist = torch.cat([vocab_dist. extra_zeros], dim=1)    # [B, V+max_oov_num]
+
+            # vocab_dist[i][extend_source_batch[i][j]] += attn_dist[i][j]
+            # for single batch:
+            # vocab_dist[extend_source_batch[j]] += attn_dist[j]
+            # vocab_dist: [B, V+max_oov_num]
+            # extend_source_batch: [B, T]
+            # attn_dist: [B, T]
+            final_dist = vocab_dist.scatter_add(1, extend_source_batch, attn_dist)
+
+        else:
+            final_dist = vocab_dist
+
+        return final_dist, hidden, source_attn_weights, code_attn_weights, ast_attn_weights
 
 
 class Model(nn.Module):
 
-    def __init__(self, code_vocab_size, ast_vocab_size, nl_vocab_size,
+    def __init__(self, source_vocab_size, code_vocab_size, ast_vocab_size, nl_vocab_size,
                  model_file_path=None, model_state_dict=None, is_eval=False):
         super(Model, self).__init__()
 
         # vocabulary size for encoders
+        self.source_vocab_size = source_vocab_size
         self.code_vocab_size = code_vocab_size
         self.ast_vocab_size = ast_vocab_size
         self.is_eval = is_eval
 
         # init models
+        self.source_encoder = Encoder(self.source_vocab_size)
         self.code_encoder = Encoder(self.code_vocab_size)
         self.ast_encoder = Encoder(self.ast_vocab_size)
         self.reduce_hidden = ReduceHidden()
         self.decoder = Decoder(nl_vocab_size)
 
         if config.use_cuda:
+            self.source_encoder = self.source_encoder.cuda()
             self.code_encoder = self.code_encoder.cuda()
             self.ast_encoder = self.ast_encoder.cuda()
             self.reduce_hidden = self.reduce_hidden.cuda()
@@ -238,6 +285,7 @@ class Model(nn.Module):
             self.set_state_dict(model_state_dict)
 
         if is_eval:
+            self.source_encoder.eval()
             self.code_encoder.eval()
             self.ast_encoder.eval()
             self.reduce_hidden.eval()
@@ -253,21 +301,24 @@ class Model(nn.Module):
         :return: decoder_outputs: [T, B, nl_vocab_size]
         """
         # batch: [T, B]
-        code_batch, code_seq_lens, ast_batch, ast_seq_lens, nl_batch, nl_seq_lens = batch
+        source_batch, source_seq_lens, code_batch, code_seq_lens, \
+            ast_batch, ast_seq_lens, nl_batch, nl_seq_lens = batch.get_regular_input()
 
         # encode
         # outputs: [T, B, H]
         # hidden: [2, B, H]
+        source_outputs, source_hidden = self.source_encoder(source_batch, source_seq_lens)
         code_outputs, code_hidden = self.code_encoder(code_batch, code_seq_lens)
         ast_outputs, ast_hidden = self.ast_encoder(ast_batch, ast_seq_lens)
 
         # data for decoder
+        source_hidden = source_hidden[:1]
         code_hidden = code_hidden[:1]  # [1, B, H]
         ast_hidden = ast_hidden[:1]  # [1, B, H]
         decoder_hidden = self.reduce_hidden(code_hidden, ast_hidden)  # [1, B, H]
 
         if is_test:
-            return code_outputs, ast_outputs, decoder_hidden
+            return source_outputs, code_outputs, ast_outputs, decoder_hidden
 
         if nl_seq_lens is None:
             max_decode_step = config.max_decode_steps
@@ -278,15 +329,25 @@ class Model(nn.Module):
 
         decoder_outputs = torch.zeros((max_decode_step, batch_size, config.nl_vocab_size), device=config.device)
 
+        extend_source_batch = None
+        extend_nl_batch = None
+        extra_zeros = None
+        if config.use_pointer_gen:
+            extend_source_batch, extend_nl_batch, extra_zeros = batch.get_pointer_gen_input()
+            nl_batch = extend_nl_batch
+
         for step in range(max_decode_step):
             # decoder_outputs: [B, nl_vocab_size]
             # decoder_hidden: [1, B, H]
             # attn_weights: [B, 1, T]
-            decoder_output, decoder_hidden, \
+            decoder_output, decoder_hidden, source_attn_weights, \
                 code_attn_weights, ast_attn_weights = self.decoder(inputs=decoder_inputs,
                                                                    last_hidden=decoder_hidden,
+                                                                   source_outputs=source_outputs,
                                                                    code_outputs=code_outputs,
-                                                                   ast_outputs=ast_outputs)
+                                                                   ast_outputs=ast_outputs,
+                                                                   extend_source_batch=extend_source_batch,
+                                                                   extra_zeros=extra_zeros)
             decoder_outputs[step] = decoder_output
 
             if config.use_teacher_forcing and random.random() < config.teacher_forcing_ratio and not self.is_eval:
@@ -301,6 +362,7 @@ class Model(nn.Module):
         return decoder_outputs
 
     def set_state_dict(self, state_dict):
+        self.source_encoder.load_state_dict(state_dict["source_encoder"])
         self.code_encoder.load_state_dict(state_dict["code_encoder"])
         self.ast_encoder.load_state_dict(state_dict["ast_encoder"])
         self.reduce_hidden.load_state_dict(state_dict["reduce_hidden"])

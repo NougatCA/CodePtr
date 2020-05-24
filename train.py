@@ -18,79 +18,94 @@ class Train(object):
     def __init__(self, vocab_file_path=None, model_file_path=None):
         """
 
-        :param vocab_file_path: tuple of code vocab, ast vocab, nl vocab, if given, build vocab by given path
+        :param vocab_file_path: tuple of source vocab, code vocab, ast vocab, nl vocab,
+                                if given, build vocab by given path
         :param model_file_path:
         """
 
         # dataset
-        self.train_dataset = data.CodePtrDataset(code_path=config.train_code_path,
+        self.train_dataset = data.CodePtrDataset(source_path=config.train_source_path,
+                                                 code_path=config.train_code_path,
                                                  ast_path=config.train_sbt_path,
                                                  nl_path=config.train_nl_path)
         self.train_dataset_size = len(self.train_dataset)
         self.train_dataloader = DataLoader(dataset=self.train_dataset,
                                            batch_size=config.batch_size,
                                            shuffle=True,
-                                           collate_fn=lambda *args: utils.unsort_collate_fn(args,
-                                                                                            code_vocab=self.code_vocab,
-                                                                                            ast_vocab=self.ast_vocab,
-                                                                                            nl_vocab=self.nl_vocab))
+                                           collate_fn=lambda *args: utils.collate_fn(args,
+                                                                                     source_vocab=self.source_vocab,
+                                                                                     code_vocab=self.code_vocab,
+                                                                                     ast_vocab=self.ast_vocab,
+                                                                                     nl_vocab=self.nl_vocab))
 
         # vocab
+        self.source_vocab: utils.Vocab
         self.code_vocab: utils.Vocab
         self.ast_vocab: utils.Vocab
         self.nl_vocab: utils.Vocab
         # load vocab from given path
         if vocab_file_path:
-            code_vocab_path, ast_vocab_path, nl_vocab_path = vocab_file_path
+            source_vocab_path, code_vocab_path, ast_vocab_path, nl_vocab_path = vocab_file_path
+            self.source_vocab = utils.load_vocab_pk(source_vocab_path)
             self.code_vocab = utils.load_vocab_pk(code_vocab_path)
             self.ast_vocab = utils.load_vocab_pk(ast_vocab_path)
             self.nl_vocab = utils.load_vocab_pk(nl_vocab_path)
         # new vocab
         else:
+            self.source_vocab = utils.Vocab('source_vocab')
             self.code_vocab = utils.Vocab('code_vocab')
             self.ast_vocab = utils.Vocab('ast_vocab')
             self.nl_vocab = utils.Vocab('nl_vocab')
-            codes, asts, nls = self.train_dataset.get_dataset()
-            for code, ast, nl in zip(codes, asts, nls):
+            sources, codes, asts, nls = self.train_dataset.get_dataset()
+            for source, code, ast, nl in zip(sources, codes, asts, nls):
+                self.source_vocab.add_sentence(source)
                 self.code_vocab.add_sentence(code)
                 self.ast_vocab.add_sentence(ast)
                 self.nl_vocab.add_sentence(nl)
 
+            self.origin_source_vocab_size = len(self.source_vocab)
             self.origin_code_vocab_size = len(self.code_vocab)
             self.origin_nl_vocab_size = len(self.nl_vocab)
 
             # trim vocabulary
+            self.source_vocab.trim(config.source_vocab_size)
             self.code_vocab.trim(config.code_vocab_size)
             self.nl_vocab.trim(config.nl_vocab_size)
+
             # save vocabulary
+            self.source_vocab.save(config.source_vocab_path)
             self.code_vocab.save(config.code_vocab_path)
             self.ast_vocab.save(config.ast_vocab_path)
             self.nl_vocab.save(config.nl_vocab_path)
+            self.source_vocab.save_txt(config.source_vocab_txt_path)
             self.code_vocab.save_txt(config.code_vocab_txt_path)
             self.ast_vocab.save_txt(config.ast_vocab_txt_path)
             self.nl_vocab.save_txt(config.nl_vocab_txt_path)
 
+        self.source_vocab_size = len(self.source_vocab)
         self.code_vocab_size = len(self.code_vocab)
         self.ast_vocab_size = len(self.ast_vocab)
         self.nl_vocab_size = len(self.nl_vocab)
 
         # model
-        self.model = models.Model(code_vocab_size=self.code_vocab_size,
+        self.model = models.Model(source_vocab_size=self.source_vocab_size,
+                                  code_vocab_size=self.code_vocab_size,
                                   ast_vocab_size=self.ast_vocab_size,
                                   nl_vocab_size=self.nl_vocab_size,
                                   model_file_path=model_file_path)
-        self.params = list(self.model.code_encoder.parameters()) + \
+        self.params = list(self.model.source_encoder.parameters()) + \
+            list(self.model.code_encoder.parameters()) + \
             list(self.model.ast_encoder.parameters()) + \
             list(self.model.reduce_hidden.parameters()) + \
             list(self.model.decoder.parameters())
 
         # optimizer
         self.optimizer = Adam([
+            {'params': self.model.source_encoder.parameters(), 'lr': config.source_encoder_lr},
             {'params': self.model.code_encoder.parameters(), 'lr': config.code_encoder_lr},
             {'params': self.model.ast_encoder.parameters(), 'lr': config.ast_encoder_lr},
             {'params': self.model.reduce_hidden.parameters(), 'lr': config.reduce_hidden_lr},
             {'params': self.model.decoder.parameters(), 'lr': config.decoder_lr},
-            
         ], betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False)
 
         if config.use_lr_decay:
@@ -118,15 +133,15 @@ class Train(object):
         self.train_iter()
         return self.best_model
 
-    def train_one_batch(self, batch, batch_size, criterion):
+    def train_one_batch(self, batch: utils.Batch, batch_size, criterion):
         """
         train one batch
-        :param batch: get from collate_fn of corresponding dataloader
+        :param batch: get from collate_fn of corresponding dataloader, class Batch
         :param batch_size: batch size
         :param criterion: loss function
         :return: avg loss
         """
-        nl_batch = batch[4]
+        nl_batch = batch.nl_batch
 
         self.optimizer.zero_grad()
 
@@ -157,7 +172,7 @@ class Train(object):
             last_print_index = 0
             for index_batch, batch in enumerate(self.train_dataloader):
 
-                batch_size = len(batch[0][0])
+                batch_size = batch.batch_size
 
                 loss = self.train_one_batch(batch, batch_size, criterion)
                 print_loss += loss.item()
@@ -228,6 +243,7 @@ class Train(object):
         :return:
         """
         state_dict = {
+                'source_encoder': self.model.source_encoder.state_dict(),
                 'code_encoder': self.model.code_encoder.state_dict(),
                 'ast_encoder': self.model.ast_encoder.state_dict(),
                 'reduce_hidden': self.model.reduce_hidden.state_dict(),

@@ -16,6 +16,8 @@ class Eval(object):
     def __init__(self, model):
 
         # vocabulary
+        self.source_vocab = utils.load_vocab_pk(config.source_vocab_path)
+        self.source_vocab_size = len(self.source_vocab)
         self.code_vocab = utils.load_vocab_pk(config.code_vocab_path)
         self.code_vocab_size = len(self.code_vocab)
         self.ast_vocab = utils.load_vocab_pk(config.ast_vocab_path)
@@ -24,26 +26,30 @@ class Eval(object):
         self.nl_vocab_size = len(self.nl_vocab)
 
         # dataset
-        self.dataset = data.CodePtrDataset(code_path=config.valid_code_path,
+        self.dataset = data.CodePtrDataset(source_path=config.valid_source_path,
+                                           code_path=config.valid_code_path,
                                            ast_path=config.valid_sbt_path,
                                            nl_path=config.valid_nl_path)
         self.dataset_size = len(self.dataset)
         self.dataloader = DataLoader(dataset=self.dataset,
                                      batch_size=config.eval_batch_size,
-                                     collate_fn=lambda *args: utils.unsort_collate_fn(args,
-                                                                                      code_vocab=self.code_vocab,
-                                                                                      ast_vocab=self.ast_vocab,
-                                                                                      nl_vocab=self.nl_vocab))
+                                     collate_fn=lambda *args: utils.collate_fn(args,
+                                                                               source_vocab=self.source_vocab,
+                                                                               code_vocab=self.code_vocab,
+                                                                               ast_vocab=self.ast_vocab,
+                                                                               nl_vocab=self.nl_vocab))
 
         # model
         if isinstance(model, str):
-            self.model = models.Model(code_vocab_size=self.code_vocab_size,
+            self.model = models.Model(source_vocab_size=self.source_vocab_size,
+                                      code_vocab_size=self.code_vocab_size,
                                       ast_vocab_size=self.ast_vocab_size,
                                       nl_vocab_size=self.nl_vocab_size,
                                       model_file_path=os.path.join(config.model_dir, model),
                                       is_eval=True)
         elif isinstance(model, dict):
-            self.model = models.Model(code_vocab_size=self.code_vocab_size,
+            self.model = models.Model(source_vocab_size=self.source_vocab_size,
+                                      code_vocab_size=self.code_vocab_size,
                                       ast_vocab_size=self.ast_vocab_size,
                                       nl_vocab_size=self.nl_vocab_size,
                                       model_state_dict=model,
@@ -55,7 +61,7 @@ class Eval(object):
         loss = self.eval_iter()
         return loss
 
-    def eval_one_batch(self, batch, batch_size, criterion):
+    def eval_one_batch(self, batch: utils.Batch, batch_size, criterion):
         """
         evaluate one batch
         :param batch:
@@ -68,7 +74,7 @@ class Eval(object):
             # code_batch and ast_batch: [T, B]
             # nl_batch is raw data, [B, T] in list
             # nl_seq_lens is None
-            nl_batch = batch[4]
+            nl_batch = batch.nl_batch
 
             decoder_outputs = self.model(batch, batch_size, self.nl_vocab)  # [T, B, nl_vocab_size]
 
@@ -88,7 +94,7 @@ class Eval(object):
         criterion = nn.NLLLoss(ignore_index=utils.get_pad_index(self.nl_vocab))
 
         for index_batch, batch in enumerate(self.dataloader):
-            batch_size = batch[0].shape[1]
+            batch_size = batch.batch_size
 
             loss = self.eval_one_batch(batch, batch_size, criterion=criterion)
             epoch_loss += loss.item()
@@ -133,6 +139,8 @@ class Test(object):
     def __init__(self, model):
 
         # vocabulary
+        self.source_vocab = utils.load_vocab_pk(config.source_vocab_path)
+        self.source_vocab_size = len(self.source_vocab)
         self.code_vocab = utils.load_vocab_pk(config.code_vocab_path)
         self.code_vocab_size = len(self.code_vocab)
         self.ast_vocab = utils.load_vocab_pk(config.ast_vocab_path)
@@ -141,27 +149,31 @@ class Test(object):
         self.nl_vocab_size = len(self.nl_vocab)
 
         # dataset
-        self.dataset = data.CodePtrDataset(code_path=config.test_code_path,
+        self.dataset = data.CodePtrDataset(source_path=config.test_source_path,
+                                           code_path=config.test_code_path,
                                            ast_path=config.test_sbt_path,
                                            nl_path=config.test_nl_path)
         self.dataset_size = len(self.dataset)
         self.dataloader = DataLoader(dataset=self.dataset,
                                      batch_size=config.test_batch_size,
-                                     collate_fn=lambda *args: utils.unsort_collate_fn(args,
-                                                                                      code_vocab=self.code_vocab,
-                                                                                      ast_vocab=self.ast_vocab,
-                                                                                      nl_vocab=self.nl_vocab,
-                                                                                      raw_nl=True))
+                                     collate_fn=lambda *args: utils.collate_fn(args,
+                                                                               source_vocab=self.source_vocab,
+                                                                               code_vocab=self.code_vocab,
+                                                                               ast_vocab=self.ast_vocab,
+                                                                               nl_vocab=self.nl_vocab,
+                                                                               raw_nl=True))
 
         # model
         if isinstance(model, str):
-            self.model = models.Model(code_vocab_size=self.code_vocab_size,
+            self.model = models.Model(source_vocab_size=self.source_vocab_size,
+                                      code_vocab_size=self.code_vocab_size,
                                       ast_vocab_size=self.ast_vocab_size,
                                       nl_vocab_size=self.nl_vocab_size,
                                       model_file_path=os.path.join(config.model_dir, model),
                                       is_eval=True)
         elif isinstance(model, dict):
-            self.model = models.Model(code_vocab_size=self.code_vocab_size,
+            self.model = models.Model(source_vocab_size=self.source_vocab_size,
+                                      code_vocab_size=self.code_vocab_size,
                                       ast_vocab_size=self.ast_vocab_size,
                                       nl_vocab_size=self.nl_vocab_size,
                                       model_state_dict=model,
@@ -191,11 +203,11 @@ class Test(object):
         :return:
         """
         with torch.no_grad():
-            nl_batch = batch[4]
+            nl_batch = batch.nl_batch
 
             # outputs: [T, B, H]
             # hidden: [1, B, H]
-            code_outputs, ast_outputs, decoder_hidden = \
+            source_outputs, code_outputs, ast_outputs, decoder_hidden = \
                 self.model(batch, batch_size, self.nl_vocab, is_test=True)
 
             # decode
@@ -233,7 +245,7 @@ class Test(object):
                 print('Test details file open failed.')
 
         for index_batch, batch in enumerate(self.dataloader):
-            batch_size = batch[0].shape[1]
+            batch_size = batch.batch_size
 
             references, candidates, s_blue_score, meteor_score = self.test_one_batch(batch, batch_size)
             total_s_bleu += s_blue_score
