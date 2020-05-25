@@ -141,13 +141,14 @@ class Train(object):
         :param criterion: loss function
         :return: avg loss
         """
-        nl_batch = batch.nl_batch
+        nl_batch = batch.extend_nl_batch if config.use_pointer_gen else batch.nl_batch
 
         self.optimizer.zero_grad()
 
         decoder_outputs = self.model(batch, batch_size, self.nl_vocab)     # [T, B, nl_vocab_size]
 
-        decoder_outputs = decoder_outputs.view(-1, config.nl_vocab_size)
+        batch_nl_vocab_size = decoder_outputs.size()[2]     # config.nl_vocab_size (+ max_oov_num)
+        decoder_outputs = decoder_outputs.view(-1, batch_nl_vocab_size)
         nl_batch = nl_batch.view(-1)
 
         loss = criterion(decoder_outputs, nl_batch)

@@ -68,6 +68,7 @@ logger.addHandler(handler)
 
 
 # device
+# use_cuda = False
 use_cuda = torch.cuda.is_available()
 device = torch.device('cuda' if use_cuda else 'cpu')
 
@@ -77,7 +78,7 @@ trim_vocab_min_count = False
 trim_vocab_max_size = True
 
 use_coverage = False
-use_pointer_gen = False
+use_pointer_gen = True
 use_teacher_forcing = True
 use_check_point = False
 use_lr_decay = True

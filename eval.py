@@ -71,14 +71,12 @@ class Eval(object):
         """
         with torch.no_grad():
 
-            # code_batch and ast_batch: [T, B]
-            # nl_batch is raw data, [B, T] in list
-            # nl_seq_lens is None
-            nl_batch = batch.nl_batch
+            nl_batch = batch.extend_nl_batch if config.use_pointer_gen else batch.nl_batch
 
             decoder_outputs = self.model(batch, batch_size, self.nl_vocab)  # [T, B, nl_vocab_size]
 
-            decoder_outputs = decoder_outputs.view(-1, config.nl_vocab_size)
+            batch_nl_vocab_size = decoder_outputs.size()[2]  # config.nl_vocab_size (+ max_oov_num)
+            decoder_outputs = decoder_outputs.view(-1, batch_nl_vocab_size)
             nl_batch = nl_batch.view(-1)
 
             loss = criterion(decoder_outputs, nl_batch)
@@ -210,12 +208,19 @@ class Test(object):
             source_outputs, code_outputs, ast_outputs, decoder_hidden = \
                 self.model(batch, batch_size, self.nl_vocab, is_test=True)
 
+            extend_source_batch = None
+            extra_zeros = None
+            if config.use_pointer_gen:
+                extend_source_batch, _, extra_zeros = batch.get_pointer_gen_input()
+
             # decode
             batch_sentences = self.beam_decode(batch_size=batch_size,
                                                source_outputs=source_outputs,
                                                code_outputs=code_outputs,
                                                ast_outputs=ast_outputs,
-                                               decoder_hidden=decoder_hidden)
+                                               decoder_hidden=decoder_hidden,
+                                               extend_source_batch=extend_source_batch,
+                                               extra_zeros=extra_zeros)
 
             # translate indices into words both for candidates
             candidates = self.translate_indices(batch_sentences)
@@ -284,6 +289,7 @@ class Test(object):
 
         return c_bleu, avg_s_bleu, avg_meteor
 
+    '''
     def greedy_decode(self, batch_size, code_outputs: torch.Tensor,
                       ast_outputs: torch.Tensor, decoder_hidden: torch.Tensor):
         """
@@ -324,9 +330,10 @@ class Test(object):
             batch_sentences.append([decoded_indices])
 
         return batch_sentences
+    '''
 
     def beam_decode(self, batch_size, source_outputs: torch.Tensor, code_outputs: torch.Tensor,
-                    ast_outputs: torch.Tensor, decoder_hidden: torch.Tensor):
+                    ast_outputs: torch.Tensor, decoder_hidden: torch.Tensor, extend_source_batch, extra_zeros):
         """
         beam decode for one batch, feed one batch for decoder
         :param batch_size:
@@ -334,6 +341,8 @@ class Test(object):
         :param code_outputs: [T, B, H]
         :param ast_outputs: [T, B, H]
         :param decoder_hidden: [1, B, H]
+        :param extend_source_batch: [B, T]
+        :param extra_zeros: [B, max_oov_num]
         :return: batch_sentences, [B, config.beam_top_sentence]
         """
         batch_sentences = []
@@ -375,10 +384,11 @@ class Test(object):
 
                     extend_nodes.append(node)
 
-                    decoder_inputs = node.word_index()
+                    decoder_input = utils.tune_up_decoder_input(node.word_index(), self.nl_vocab)
+
                     single_decoder_hidden = node.hidden.clone().detach()     # [1, 1, H]
 
-                    feed_inputs.append(decoder_inputs)  # [B]
+                    feed_inputs.append(decoder_input)  # [B]
                     feed_hidden.append(single_decoder_hidden)   # B x [1, 1, H]
 
                 if len(extend_nodes) == 0:
@@ -401,8 +411,8 @@ class Test(object):
                                                                              source_outputs=feed_source_outputs,
                                                                              code_outputs=feed_code_outputs,
                                                                              ast_outputs=feed_ast_outputs,
-                                                                             extend_source_batch=None,
-                                                                             extra_zeros=None)
+                                                                             extend_source_batch=extend_source_batch,
+                                                                             extra_zeros=extra_zeros)
 
                 # get top k words
                 # log_probs: [B, beam_width]
