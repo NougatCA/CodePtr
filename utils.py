@@ -456,18 +456,16 @@ def collate_fn(batch, source_vocab, code_vocab, ast_vocab, nl_vocab, raw_nl=Fals
     extend_source_batch_indices = None
     extend_nl_batch_indices = None
     batch_oovs = None
-    if config.use_pointer_gen and not raw_nl:
+    if config.use_pointer_gen:
         extend_source_batch_indices, extend_nl_batch_indices, batch_oovs = extend_indices_from_batch(source_batch,
                                                                                                      nl_batch,
                                                                                                      source_vocab,
                                                                                                      nl_vocab)
-    else:
-        source_batch = indices_from_batch(source_batch, source_vocab)
-        nl_batch = indices_from_batch(nl_batch, nl_vocab)
+    source_batch = indices_from_batch(source_batch, source_vocab)
     code_batch = indices_from_batch(code_batch, code_vocab)  # [B, T]
     ast_batch = indices_from_batch(ast_batch, ast_vocab)  # [B, T]
-    # if not raw_nl:
-    #     nl_batch = indices_from_batch(nl_batch, nl_vocab)  # [B, T]
+    if not raw_nl:
+        nl_batch = indices_from_batch(nl_batch, nl_vocab)  # [B, T]
 
     source_seq_lens = get_seq_lens(source_batch)
     code_seq_lens = get_seq_lens(code_batch)

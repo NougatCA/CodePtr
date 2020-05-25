@@ -177,8 +177,7 @@ class Decoder(nn.Module):
         init_linear_wt(self.out)
 
     def forward(self, inputs: torch.Tensor, last_hidden: torch.Tensor, source_outputs: torch.Tensor,
-                code_outputs: torch.Tensor, ast_outputs: torch.Tensor, extend_source_batch, extra_zeros) \
-            -> (torch.Tensor, torch.Tensor, torch.Tensor):
+                code_outputs: torch.Tensor, ast_outputs: torch.Tensor, extend_source_batch, extra_zeros):
         """
         forward the net
         :param inputs: word input of current time step, [B]

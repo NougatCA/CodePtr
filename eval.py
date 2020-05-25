@@ -212,6 +212,7 @@ class Test(object):
 
             # decode
             batch_sentences = self.beam_decode(batch_size=batch_size,
+                                               source_outputs=source_outputs,
                                                code_outputs=code_outputs,
                                                ast_outputs=ast_outputs,
                                                decoder_hidden=decoder_hidden)
@@ -244,6 +245,7 @@ class Test(object):
             except IOError:
                 print('Test details file open failed.')
 
+        sample_id = 0
         for index_batch, batch in enumerate(self.dataloader):
             batch_size = batch.batch_size
 
@@ -261,9 +263,11 @@ class Test(object):
 
             if config.save_test_details:
                 for index in range(len(references)):
+                    out_file.write('Sample {}:'.format(sample_id))
                     out_file.write(' '.join(['Reference:'] + references[index]) + '\n')
                     out_file.write(' '.join(['Candidate:'] + candidates[index]) + '\n')
                     out_file.write('\n')
+                    sample_id += 1
 
         # corpus level bleu score
         c_bleu = utils.corpus_bleu_score(references=total_references, candidates=total_candidates)
@@ -321,11 +325,12 @@ class Test(object):
 
         return batch_sentences
 
-    def beam_decode(self, batch_size, code_outputs: torch.Tensor,
+    def beam_decode(self, batch_size, source_outputs: torch.Tensor, code_outputs: torch.Tensor,
                     ast_outputs: torch.Tensor, decoder_hidden: torch.Tensor):
         """
         beam decode for one batch, feed one batch for decoder
         :param batch_size:
+        :param source_outputs: [T, B, H]
         :param code_outputs: [T, B, H]
         :param ast_outputs: [T, B, H]
         :param decoder_hidden: [1, B, H]
@@ -337,6 +342,7 @@ class Test(object):
         for index_batch in range(batch_size):
             # for each input sentence
             single_decoder_hidden = decoder_hidden[:, index_batch, :].unsqueeze(1)  # [1, 1, H]
+            single_source_output = source_outputs[:, index_batch, :].unsqueeze(1)   # [T, 1, H]
             single_code_output = code_outputs[:, index_batch, :].unsqueeze(1)  # [T, 1, H]
             single_ast_output = ast_outputs[:, index_batch, :].unsqueeze(1)  # [T, 1, H]
 
@@ -379,6 +385,7 @@ class Test(object):
                     break
 
                 feed_batch_size = len(feed_inputs)
+                feed_source_outputs = single_source_output.repeat(1, feed_batch_size, 1)
                 feed_code_outputs = single_code_output.repeat(1, feed_batch_size, 1)
                 feed_ast_outputs = single_ast_output.repeat(1, feed_batch_size, 1)
 
@@ -388,11 +395,14 @@ class Test(object):
                 # decoder_outputs: [B, nl_vocab_size]
                 # new_decoder_hidden: [1, B, H]
                 # attn_weights: [B, 1, T]
-                decoder_outputs, new_decoder_hidden, \
+                decoder_outputs, new_decoder_hidden, source_attn_weights, \
                     code_attn_weights, ast_attn_weights = self.model.decoder(inputs=feed_inputs,
                                                                              last_hidden=feed_hidden,
+                                                                             source_outputs=feed_source_outputs,
                                                                              code_outputs=feed_code_outputs,
-                                                                             ast_outputs=feed_ast_outputs)
+                                                                             ast_outputs=feed_ast_outputs,
+                                                                             extend_source_batch=None,
+                                                                             extra_zeros=None)
 
                 # get top k words
                 # log_probs: [B, beam_width]

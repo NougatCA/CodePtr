@@ -9,11 +9,12 @@ def _train(vocab_file_path=None, model_file_path=None):
     print('\nStarting the training process......\n')
 
     if vocab_file_path:
-        code_vocab_path, ast_vocab_path, nl_vocab_path = vocab_file_path
+        source_vocab_path, code_vocab_path, ast_vocab_path, nl_vocab_path = vocab_file_path
         print('Vocabulary will be built by given file path.')
-        print('\tsource code vocabulary path:\t', os.path.join(config.vocab_dir, code_vocab_path))
-        print('\tast of code vocabulary path:\t', os.path.join(config.vocab_dir, ast_vocab_path))
-        print('\tcode comment vocabulary path:\t', os.path.join(config.vocab_dir, nl_vocab_path))
+        print('\tSource code vocabulary path:\t', os.path.join(config.vocab_dir, source_vocab_path))
+        print('\tTokenized source code vocabulary path:\t', os.path.join(config.vocab_dir, code_vocab_path))
+        print('\tAst of code vocabulary path:\t', os.path.join(config.vocab_dir, ast_vocab_path))
+        print('\tCode comment vocabulary path:\t', os.path.join(config.vocab_dir, nl_vocab_path))
     else:
         print('Vocabulary will be built according to dataset.')
 
@@ -27,17 +28,23 @@ def _train(vocab_file_path=None, model_file_path=None):
     print('Environments built successfully.\n')
     print('Size of train dataset:', train_instance.train_dataset_size)
 
+    source_oov_rate = 1 - train_instance.source_vocab_size / train_instance.origin_source_vocab_size
     code_oov_rate = 1 - train_instance.code_vocab_size / train_instance.origin_code_vocab_size
     nl_oov_rate = 1 - train_instance.nl_vocab_size / train_instance.origin_nl_vocab_size
 
-    print('\nSize of source code vocabulary:', train_instance.origin_code_vocab_size,
+    print('\nSize of source code vocabulary:', train_instance.origin_source_vocab_size,
+          '->', train_instance.source_vocab_size)
+    print('Source code OOV rate: {:.2f}%'.format(source_oov_rate * 100))
+    print('\nSize of tokenized source code vocabulary:', train_instance.origin_code_vocab_size,
           '->', train_instance.code_vocab_size)
-    print('Source code OOV rate: {:.2f}%'.format(code_oov_rate * 100))
+    print('Tokenized source code OOV rate: {:.2f}%'.format(code_oov_rate * 100))
     print('\nSize of ast of code vocabulary:', train_instance.ast_vocab_size)
     print('\nSize of code comment vocabulary:', train_instance.origin_nl_vocab_size, '->', train_instance.nl_vocab_size)
     print('Code comment OOV rate: {:.2f}%'.format(nl_oov_rate * 100))
     config.logger.info('Size of train dataset:{}'.format(train_instance.train_dataset_size))
     config.logger.info('Size of source code vocabulary: {} -> {}'.format(
+        train_instance.origin_source_vocab_size, train_instance.source_vocab_size))
+    config.logger.info('Size of tokenized source code vocabulary: {} -> {}'.format(
         train_instance.origin_code_vocab_size, train_instance.code_vocab_size))
     config.logger.info('Source code OOV rate: {:.2f}%'.format(code_oov_rate * 100))
     config.logger.info('Size of ast of code vocabulary: {}'.format(train_instance.ast_vocab_size))
@@ -80,6 +87,6 @@ def _test(model):
 
 
 if __name__ == '__main__':
-    best_model_dict = _train()
-    _test(best_model_dict)
-    # _test(os.path.join('20200521_203654', 'best_epoch-1_batch-last.pt'))
+    # best_model_dict = _train()
+    # _test(best_model_dict)
+    _test(os.path.join('20200524_223835', 'best_epoch-2_batch-last.pt'))
