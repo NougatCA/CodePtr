@@ -117,12 +117,13 @@ lr_decay_rate = 0.99
 n_epochs = 3    # 50
 
 beam_width = 5
-beam_top_sentences = 1     # number of sentences beam decoder decode for one input
+beam_top_sentences = 1     # number of sentences beam decoder decode for one input, must be 1 (eval.translate_indices)
 eval_batch_size = 4    # 16
 test_batch_size = 4
 
 init_uniform_mag = 0.02
 init_normal_std = 1e-4
+eps = 1e-12
 
 
 # visualization and resumes

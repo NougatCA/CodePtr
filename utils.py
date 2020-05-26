@@ -400,6 +400,7 @@ def get_eos_index(vocab: Vocab) -> int:
     return vocab.word2index[_EOS]
 
 
+'''
 def sort_collate_fn(batch, code_vocab, ast_vocab, nl_vocab, is_eval=False) -> \
         (torch.Tensor, list, list, torch.Tensor, list, list, torch.Tensor, list):
     """
@@ -443,6 +444,7 @@ def sort_collate_fn(batch, code_vocab, ast_vocab, nl_vocab, is_eval=False) -> \
     return code_batch, code_seq_lens, code_pos, \
         ast_batch, ast_seq_lens, ast_pos, \
         nl_batch, nl_seq_lens
+'''
 
 
 def collate_fn(batch, source_vocab, code_vocab, ast_vocab, nl_vocab, raw_nl=False):

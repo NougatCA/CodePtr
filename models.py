@@ -226,16 +226,16 @@ class Decoder(nn.Module):
         context = context.squeeze(0)    # [B, H]
 
         vocab_dist = self.out(torch.cat([outputs, context], 1))    # [B, nl_vocab_size]
-        vocab_dist = F.log_softmax(vocab_dist, dim=1)     # P_vocab, [B, nl_vocab_size]
+        vocab_dist = F.softmax(vocab_dist, dim=1)     # P_vocab, [B, nl_vocab_size]
 
         if config.use_pointer_gen:
-            vocab_dist = p_gen * vocab_dist    # [B, V]
+            vocab_dist_ = p_gen * vocab_dist    # [B, V]
             source_attn_weights_ = source_attn_weights.squeeze(1)    # [B, T]
             attn_dist = (1 - p_gen) * source_attn_weights_  # [B, T]
 
             # if has extra words
             if extra_zeros is not None:
-                vocab_dist = torch.cat([vocab_dist, extra_zeros], dim=1)    # [B, V+max_oov_num]
+                vocab_dist_ = torch.cat([vocab_dist_, extra_zeros], dim=1)    # [B, V+max_oov_num]
 
             # vocab_dist[i][extend_source_batch[i][j]] += attn_dist[i][j]
             # for single batch:
@@ -243,10 +243,12 @@ class Decoder(nn.Module):
             # vocab_dist: [B, V+max_oov_num]
             # extend_source_batch: [B, T]
             # attn_dist: [B, T]
-            final_dist = vocab_dist.scatter_add(1, extend_source_batch, attn_dist)
+            final_dist = vocab_dist_.scatter_add(1, extend_source_batch, attn_dist)
 
         else:
             final_dist = vocab_dist
+
+        final_dist = torch.log(final_dist + config.eps)
 
         return final_dist, hidden, source_attn_weights, code_attn_weights, ast_attn_weights
 
@@ -312,7 +314,7 @@ class Model(nn.Module):
         ast_outputs, ast_hidden = self.ast_encoder(ast_batch, ast_seq_lens)
 
         # data for decoder
-        source_hidden = source_hidden[:1]
+        # source_hidden = source_hidden[:1]
         code_hidden = code_hidden[:1]  # [1, B, H]
         ast_hidden = ast_hidden[:1]  # [1, B, H]
         decoder_hidden = self.reduce_hidden(code_hidden, ast_hidden)  # [1, B, H]
@@ -331,7 +333,6 @@ class Model(nn.Module):
         extra_zeros = None
         if config.use_pointer_gen:
             extend_source_batch, _, extra_zeros = batch.get_pointer_gen_input()
-
             decoder_outputs = torch.zeros((max_decode_step, batch_size, config.nl_vocab_size + batch.max_oov_num),
                                           device=config.device)
         else:
@@ -357,11 +358,15 @@ class Model(nn.Module):
             else:
                 # output of last step to be the next input
                 _, indices = decoder_output.topk(1)  # [B, 1]
-                word_indices = indices.squeeze(1).detach().cpu().numpy()  # [B]
-                decoder_inputs = []
-                for index in word_indices:
-                    decoder_inputs.append(utils.tune_up_decoder_input(index, nl_vocab))
-                decoder_inputs = torch.tensor(decoder_inputs, device=config.device)
+                if config.use_pointer_gen:
+                    word_indices = indices.squeeze(1).detach().cpu().numpy()  # [B]
+                    decoder_inputs = []
+                    for index in word_indices:
+                        decoder_inputs.append(utils.tune_up_decoder_input(index, nl_vocab))
+                    decoder_inputs = torch.tensor(decoder_inputs, device=config.device)
+                else:
+                    decoder_inputs = indices.squeeze(1).detach()  # [B]
+                    decoder_inputs = decoder_inputs.to(config.device)
 
         return decoder_outputs
 

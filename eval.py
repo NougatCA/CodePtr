@@ -223,7 +223,7 @@ class Test(object):
                                                extra_zeros=extra_zeros)
 
             # translate indices into words both for candidates
-            candidates = self.translate_indices(batch_sentences)
+            candidates = self.translate_indices(batch_sentences, batch.batch_oovs)
 
             # measure
             s_blue_score, meteor_score = utils.measure(batch_size, references=nl_batch, candidates=candidates)
@@ -268,7 +268,7 @@ class Test(object):
 
             if config.save_test_details:
                 for index in range(len(references)):
-                    out_file.write('Sample {}:'.format(sample_id))
+                    out_file.write('Sample {}:\n'.format(sample_id))
                     out_file.write(' '.join(['Reference:'] + references[index]) + '\n')
                     out_file.write(' '.join(['Candidate:'] + candidates[index]) + '\n')
                     out_file.write('\n')
@@ -347,13 +347,15 @@ class Test(object):
         """
         batch_sentences = []
 
-        # B = 1
         for index_batch in range(batch_size):
             # for each input sentence
             single_decoder_hidden = decoder_hidden[:, index_batch, :].unsqueeze(1)  # [1, 1, H]
             single_source_output = source_outputs[:, index_batch, :].unsqueeze(1)   # [T, 1, H]
             single_code_output = code_outputs[:, index_batch, :].unsqueeze(1)  # [T, 1, H]
             single_ast_output = ast_outputs[:, index_batch, :].unsqueeze(1)  # [T, 1, H]
+
+            single_extend_source = extend_source_batch[index_batch]     # [T]
+            single_extra_zeros = extra_zeros[index_batch]   # [max_oov_num]
 
             root = BeamNode(sentence_indices=[utils.get_sos_index(self.nl_vocab)],
                             log_probs=[0.0],
@@ -399,6 +401,9 @@ class Test(object):
                 feed_code_outputs = single_code_output.repeat(1, feed_batch_size, 1)
                 feed_ast_outputs = single_ast_output.repeat(1, feed_batch_size, 1)
 
+                feed_extend_source = single_extend_source.repeat(feed_batch_size, 1)
+                feed_extra_zeros = single_extra_zeros.repeat(feed_batch_size, 1)
+
                 feed_inputs = torch.tensor(feed_inputs, device=config.device)   # [B]
                 feed_hidden = torch.stack(feed_hidden, dim=2).squeeze(0)    # [1, B, H]
 
@@ -411,8 +416,8 @@ class Test(object):
                                                                              source_outputs=feed_source_outputs,
                                                                              code_outputs=feed_code_outputs,
                                                                              ast_outputs=feed_ast_outputs,
-                                                                             extend_source_batch=extend_source_batch,
-                                                                             extra_zeros=extra_zeros)
+                                                                             extend_source_batch=feed_extend_source,
+                                                                             extra_zeros=feed_extra_zeros)
 
                 # get top k words
                 # log_probs: [B, beam_width]
@@ -449,18 +454,30 @@ class Test(object):
 
         return batch_sentences
 
-    def translate_indices(self, batch_sentences):
+    def translate_indices(self, batch_sentences, batch_oovs: list):
         """
         translate indices to words for one batch
         :param batch_sentences: [B, config.beam_top_sentences, sentence_length]
+        :param batch_oovs: list of oov words list for one batch, None if not use pointer gen, [B, oov_num(variable)]
         :return:
         """
         batch_words = []
-        for sentences in batch_sentences:
+        for index_batch, sentences in enumerate(batch_sentences):
             words = []
             for indices in sentences:
-                for index in indices:
-                    word = self.nl_vocab.index2word[index]
+                for index in indices:   # indices is a list of length 1, only loops once
+                    if index not in self.nl_vocab.index2word:   # current index is out of vocabulary
+                        assert batch_oovs is not None       # should not happen when not use pointer gen
+                        oovs = batch_oovs[index_batch]      # oov list for current sample
+                        oov_index = index - self.nl_vocab_size  # oov temp index
+                        try:
+                            word = oovs[oov_index]
+                        except IndexError:
+                            raise IndexError('Error: model produced word id', index,
+                                             'which is corresponding to an OOV word index', oov_index,
+                                             'but this sample only has {} OOV words.'.format(len(oovs)))
+                    else:
+                        word = self.nl_vocab.index2word[index]
                     if utils.is_unk(word) or not utils.is_special_symbol(word):
                         words.append(word)
             batch_words.append(words)

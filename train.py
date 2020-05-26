@@ -163,7 +163,6 @@ class Train(object):
 
     def train_iter(self):
         start_time = time.time()
-
         plot_loss = 0
 
         criterion = nn.NLLLoss(ignore_index=utils.get_pad_index(self.nl_vocab))
