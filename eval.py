@@ -73,15 +73,17 @@ class Eval(object):
 
             nl_batch = batch.extend_nl_batch if config.use_pointer_gen else batch.nl_batch
 
-            decoder_outputs = self.model(batch, batch_size, self.nl_vocab)  # [T, B, nl_vocab_size]
+            decoder_outputs, coverage_loss = self.model(batch, batch_size, self.nl_vocab)  # [T, B, nl_vocab_size]
 
             batch_nl_vocab_size = decoder_outputs.size()[2]  # config.nl_vocab_size (+ max_oov_num)
             decoder_outputs = decoder_outputs.view(-1, batch_nl_vocab_size)
             nl_batch = nl_batch.view(-1)
 
             loss = criterion(decoder_outputs, nl_batch)
+            if config.use_coverage:
+                loss += coverage_loss
 
-            return loss
+            return loss, coverage_loss
 
     def eval_iter(self):
         """
@@ -89,18 +91,32 @@ class Eval(object):
         :return: scores
         """
         epoch_loss = 0
+        epoch_coverage_loss = 0
         criterion = nn.NLLLoss(ignore_index=utils.get_pad_index(self.nl_vocab))
 
         for index_batch, batch in enumerate(self.dataloader):
             batch_size = batch.batch_size
 
-            loss = self.eval_one_batch(batch, batch_size, criterion=criterion)
+            loss, coverage_loss = self.eval_one_batch(batch, batch_size, criterion=criterion)
             epoch_loss += loss.item()
+            if config.use_coverage:
+                epoch_coverage_loss += coverage_loss
 
         avg_loss = epoch_loss / len(self.dataloader)
 
-        print('Validate completed, avg loss: {:.4f}.\n'.format(avg_loss))
-        config.logger.info('Validate completed, avg loss: {:.4f}.\n'.format(avg_loss))
+        avg_coverage_loss = 0
+        if config.use_coverage:
+            avg_coverage_loss = epoch_coverage_loss / len(self.dataloader)
+
+        if config.use_coverage:
+            print('Validate completed, avg loss: {:.4f}, where coverage loss: {:.4f}.\n'.format(
+                avg_loss, avg_coverage_loss))
+            config.logger.info('Validate completed, avg loss: {:.4f}, where coverage loss: {:.4f}.\n'.format(
+                avg_loss, avg_coverage_loss))
+        else:
+            print('Validate completed, avg loss: {:.4f}.\n'.format(avg_loss))
+            config.logger.info('Validate completed, avg loss: {:.4f}.\n'.format(avg_loss))
+
         return avg_loss
 
     def set_state_dict(self, state_dict):
@@ -109,7 +125,7 @@ class Eval(object):
 
 class BeamNode(object):
 
-    def __init__(self, sentence_indices, log_probs, hidden):
+    def __init__(self, sentence_indices, log_probs, hidden, coverage):
         """
 
         :param sentence_indices: indices of words of current sentence (from root to current node)
@@ -119,11 +135,13 @@ class BeamNode(object):
         self.sentence_indices = sentence_indices
         self.log_probs = log_probs
         self.hidden = hidden
+        self.coverage = coverage
 
-    def extend_node(self, word_index, log_prob, hidden):
+    def extend_node(self, word_index, log_prob, hidden, coverage):
         return BeamNode(sentence_indices=self.sentence_indices + [word_index],
                         log_probs=self.log_probs + [log_prob],
-                        hidden=hidden)
+                        hidden=hidden,
+                        coverage=coverage)
 
     def avg_log_prob(self):
         return sum(self.log_probs) / len(self.sentence_indices)
@@ -357,9 +375,14 @@ class Test(object):
             single_extend_source = extend_source_batch[index_batch]     # [T]
             single_extra_zeros = extra_zeros[index_batch]   # [max_oov_num]
 
+            single_coverage = None
+            if config.use_coverage:
+                single_coverage = torch.zeros((1, config.max_code_length), device=config.device)   # [1, T]
+
             root = BeamNode(sentence_indices=[utils.get_sos_index(self.nl_vocab)],
                             log_probs=[0.0],
-                            hidden=single_decoder_hidden)
+                            hidden=single_decoder_hidden,
+                            coverage=single_coverage)
 
             current_nodes = [root]  # list of nodes to be further extended
             final_nodes = []  # list of end nodes
@@ -372,6 +395,7 @@ class Test(object):
 
                 feed_inputs = []
                 feed_hidden = []
+                feed_coverage = []
 
                 # B = len(current_nodes) except eos
                 extend_nodes = []
@@ -389,9 +413,13 @@ class Test(object):
                     decoder_input = utils.tune_up_decoder_input(node.word_index(), self.nl_vocab)
 
                     single_decoder_hidden = node.hidden.clone().detach()     # [1, 1, H]
+                    single_coverage = node.coverage.clone().detach()    # [1, T]
 
                     feed_inputs.append(decoder_input)  # [B]
                     feed_hidden.append(single_decoder_hidden)   # B x [1, 1, H]
+
+                    if config.use_coverage:
+                        feed_coverage.append(single_coverage)   # [B, T]
 
                 if len(extend_nodes) == 0:
                     break
@@ -407,17 +435,22 @@ class Test(object):
                 feed_inputs = torch.tensor(feed_inputs, device=config.device)   # [B]
                 feed_hidden = torch.stack(feed_hidden, dim=2).squeeze(0)    # [1, B, H]
 
+                if config.use_coverage:
+                    feed_coverage = torch.tensor(feed_coverage, device=config.device)   # [B, T]
+
                 # decoder_outputs: [B, nl_vocab_size]
                 # new_decoder_hidden: [1, B, H]
                 # attn_weights: [B, 1, T]
-                decoder_outputs, new_decoder_hidden, source_attn_weights, \
-                    code_attn_weights, ast_attn_weights = self.model.decoder(inputs=feed_inputs,
-                                                                             last_hidden=feed_hidden,
-                                                                             source_outputs=feed_source_outputs,
-                                                                             code_outputs=feed_code_outputs,
-                                                                             ast_outputs=feed_ast_outputs,
-                                                                             extend_source_batch=feed_extend_source,
-                                                                             extra_zeros=feed_extra_zeros)
+                # coverage: [B, T]
+                decoder_outputs, new_decoder_hidden, source_attn_weights, code_attn_weights, ast_attn_weights, \
+                    next_coverage = self.model.decoder(inputs=feed_inputs,
+                                                       last_hidden=feed_hidden,
+                                                       source_outputs=feed_source_outputs,
+                                                       code_outputs=feed_code_outputs,
+                                                       ast_outputs=feed_ast_outputs,
+                                                       extend_source_batch=feed_extend_source,
+                                                       extra_zeros=feed_extra_zeros,
+                                                       coverage=feed_coverage)
 
                 # get top k words
                 # log_probs: [B, beam_width]
@@ -429,13 +462,18 @@ class Test(object):
                     word_indices = batch_word_indices[index_node]
                     hidden = new_decoder_hidden[:, index_node, :].unsqueeze(1)
 
+                    coverage = None
+                    if config.use_coverage:
+                        coverage = next_coverage[index_node].unsqueeze(0)   # [1, T]
+
                     for i in range(config.beam_width):
                         log_prob = log_probs[i]
                         word_index = word_indices[i].item()
 
                         new_node = node.extend_node(word_index=word_index,
                                                     log_prob=log_prob,
-                                                    hidden=hidden)
+                                                    hidden=hidden,
+                                                    coverage=coverage)
                         candidate_nodes.append(new_node)
 
                 # sort candidate nodes by log_prb and select beam_width nodes

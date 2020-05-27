@@ -528,7 +528,7 @@ def to_time(float_time):
 
 
 def print_train_progress(start_time, cur_time, epoch, n_epochs, index_batch,
-                         batch_size, dataset_size, loss, last_print_index):
+                         batch_size, dataset_size, loss, last_print_index, coverage_loss):
     spend = cur_time - start_time
     spend_h, spend_min, spend_s, spend_ms = to_time(spend)
 
@@ -541,9 +541,11 @@ def print_train_progress(start_time, cur_time, epoch, n_epochs, index_batch,
     time_remaining = spend / percent_complete * (100 - percent_complete)
     remain_h, remain_min, remain_s, remain_ms = to_time(time_remaining)
 
-    batch_length = index_batch - last_print_index
-    if batch_length != 0:
-        loss = loss / batch_length
+    batch_num = index_batch - last_print_index
+    if batch_num != 0:
+        loss = loss / batch_num
+        if config.use_coverage:
+            coverage_loss = coverage_loss / batch_num
 
     print('\033[0;36mtime\033[0m: {:2d}h {:2d}min {:2d}s {:3d}ms, '.format(
         spend_h, spend_min, spend_s, spend_ms), end='')
@@ -552,10 +554,16 @@ def print_train_progress(start_time, cur_time, epoch, n_epochs, index_batch,
     print('\033[0;33mepoch\033[0m: %*d/%*d, \033[0;33mbatch\033[0m: %*d/%*d, ' %
           (len_epoch, epoch + 1, len_epoch, n_epochs, len_iter, index_batch, len_iter, n_iter - 1), end='')
     print('\033[0;32mpercent complete\033[0m: {:6.2f}%, \033[0;31mavg loss\033[0m: {:.4f}'.format(
-        percent_complete, loss))
+        percent_complete, loss), end='' if config.use_coverage else '\n')
+    if config.use_coverage:
+        print(', \033[0;31mwhere coverage loss\033[0m: {:.4f}'.format(coverage_loss))
 
-    config.logger.info('epoch: {}/{}, batch: {}/{}, avg loss: {:.4f}'.format(
-        epoch + 1, n_epochs, index_batch, n_iter - 1, loss))
+    if config.use_coverage:
+        config.logger.info('epoch: {}/{}, batch: {}/{}, avg loss: {:.4f}, where coverage loss: {:.4f}'.format(
+            epoch + 1, n_epochs, index_batch, n_iter - 1, loss, coverage_loss))
+    else:
+        config.logger.info('epoch: {}/{}, batch: {}/{}, avg loss: {:.4f}'.format(
+            epoch + 1, n_epochs, index_batch, n_iter - 1, loss))
 
 
 def plot_train_progress():

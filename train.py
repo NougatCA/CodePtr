@@ -145,13 +145,15 @@ class Train(object):
 
         self.optimizer.zero_grad()
 
-        decoder_outputs = self.model(batch, batch_size, self.nl_vocab)     # [T, B, nl_vocab_size]
+        decoder_outputs, coverage_loss = self.model(batch, batch_size, self.nl_vocab)     # [T, B, nl_vocab_size]
 
         batch_nl_vocab_size = decoder_outputs.size()[2]     # config.nl_vocab_size (+ max_oov_num)
         decoder_outputs = decoder_outputs.view(-1, batch_nl_vocab_size)
         nl_batch = nl_batch.view(-1)
 
         loss = criterion(decoder_outputs, nl_batch)
+        if config.use_coverage:
+            loss += coverage_loss
         loss.backward()
 
         # address over fit
@@ -159,7 +161,7 @@ class Train(object):
 
         self.optimizer.step()
 
-        return loss
+        return loss, coverage_loss
 
     def train_iter(self):
         start_time = time.time()
@@ -169,14 +171,18 @@ class Train(object):
 
         for epoch in range(config.n_epochs):
             print_loss = 0
+            print_coverage_loss = 0
             last_print_index = 0
             for index_batch, batch in enumerate(self.train_dataloader):
 
                 batch_size = batch.batch_size
 
-                loss = self.train_one_batch(batch, batch_size, criterion)
+                loss, coverage_loss = self.train_one_batch(batch, batch_size, criterion)
                 print_loss += loss.item()
                 plot_loss += loss.item()
+
+                if config.use_coverage:
+                    print_coverage_loss += coverage_loss
 
                 # print train progress details
                 if index_batch % config.print_every == 0:
@@ -184,8 +190,9 @@ class Train(object):
                     utils.print_train_progress(start_time=start_time, cur_time=cur_time, epoch=epoch,
                                                n_epochs=config.n_epochs, index_batch=index_batch, batch_size=batch_size,
                                                dataset_size=self.train_dataset_size, loss=print_loss,
-                                               last_print_index=last_print_index)
+                                               last_print_index=last_print_index, coverage_loss=coverage_loss)
                     print_loss = 0
+                    print_coverage_loss = 0
                     last_print_index = index_batch
 
                 # plot train progress details
