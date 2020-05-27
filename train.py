@@ -121,6 +121,12 @@ class Train(object):
         # eval instance
         self.eval_instance = eval.Eval(self.get_cur_state_dict())
 
+        # early stopping
+        self.early_stopping = None
+        if config.use_early_stopping:
+            self.early_stopping = utils.EarlyStopping()
+
+        # creates the model dir for this run
         config.model_dir = os.path.join(config.model_dir, utils.get_timestamp())
         if not os.path.exists(config.model_dir):
             os.makedirs(config.model_dir)
@@ -211,11 +217,22 @@ class Train(object):
                         epoch, index_batch))
                     self.valid_state_dict(state_dict=self.get_cur_state_dict(), epoch=epoch, batch=index_batch)
 
+                    if config.use_early_stopping:
+                        if self.early_stopping.early_stop:
+                            break
+
+            if config.use_early_stopping:
+                if self.early_stopping.early_stop:
+                    break
+
             # validate on the valid dataset every epoch
             if config.validate_during_train:
                 print('\nValidating the model at the end of epoch {} on valid dataset......'.format(epoch))
                 config.logger.info('Validating the model at the end of epoch {} on valid dataset.'.format(epoch))
                 self.valid_state_dict(self.get_cur_state_dict(), epoch=epoch)
+                if config.use_early_stopping:
+                    if self.early_stopping.early_stop:
+                        break
 
             if config.use_lr_decay:
                 self.lr_scheduler.step()
@@ -272,3 +289,6 @@ class Train(object):
             self.min_loss = loss
             self.best_model = state_dict
             self.best_epoch_batch = (epoch, batch)
+
+        if config.use_early_stopping:
+            self.early_stopping(loss)

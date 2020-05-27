@@ -82,6 +82,7 @@ use_pointer_gen = True
 use_teacher_forcing = True
 use_check_point = False
 use_lr_decay = True
+use_early_stopping = True
 
 validate_during_train = True
 save_valid_model = True
@@ -94,6 +95,7 @@ max_code_length = 200
 max_nl_length = 30
 min_nl_length = 4
 max_decode_steps = 30
+early_stopping_patience = 20
 
 
 # hyperparameters
@@ -137,7 +139,8 @@ validate_every = 500     # 2000
 save_config = True
 
 config_be_saved = ['dataset_dir', 'use_cuda', 'device', 'use_coverage', 'use_pointer_gen', 'use_teacher_forcing',
-                   'use_lr_decay', 'max_code_length', 'max_nl_length', 'min_nl_length', 'max_decode_steps']
+                   'use_lr_decay', 'use_early_stopping', 'max_code_length', 'max_nl_length', 'min_nl_length',
+                   'max_decode_steps', 'early_stopping_patience']
 
 train_config_be_saved = ['embedding_dim', 'hidden_size', 'decoder_dropout_rate', 'teacher_forcing_ratio',
                          'batch_size', 'source_encoder_lr', 'code_encoder_lr', 'ast_encoder_lr', 'reduce_hidden_lr',
