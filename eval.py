@@ -111,11 +111,11 @@ class Eval(object):
         if config.use_coverage:
             print('Validate completed, avg loss: {:.4f}, where coverage loss: {:.4f}.\n'.format(
                 avg_loss, avg_coverage_loss))
-            config.logger.info('Validate completed, avg loss: {:.4f}, where coverage loss: {:.4f}.\n'.format(
+            config.logger.info('Validate completed, avg loss: {:.4f}, where coverage loss: {:.4f}.'.format(
                 avg_loss, avg_coverage_loss))
         else:
             print('Validate completed, avg loss: {:.4f}.\n'.format(avg_loss))
-            config.logger.info('Validate completed, avg loss: {:.4f}.\n'.format(avg_loss))
+            config.logger.info('Validate completed, avg loss: {:.4f}.'.format(avg_loss))
 
         return avg_loss
 
@@ -413,12 +413,12 @@ class Test(object):
                     decoder_input = utils.tune_up_decoder_input(node.word_index(), self.nl_vocab)
 
                     single_decoder_hidden = node.hidden.clone().detach()     # [1, 1, H]
-                    single_coverage = node.coverage.clone().detach()    # [1, T]
 
                     feed_inputs.append(decoder_input)  # [B]
                     feed_hidden.append(single_decoder_hidden)   # B x [1, 1, H]
 
                     if config.use_coverage:
+                        single_coverage = node.coverage.clone().detach()  # [1, T]
                         feed_coverage.append(single_coverage)   # [B, T]
 
                 if len(extend_nodes) == 0:

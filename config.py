@@ -95,7 +95,7 @@ max_code_length = 200
 max_nl_length = 30
 min_nl_length = 4
 max_decode_steps = 30
-early_stopping_patience = 20
+early_stopping_patience = 10
 
 
 # hyperparameters
@@ -120,8 +120,8 @@ n_epochs = 3    # 50
 
 beam_width = 5
 beam_top_sentences = 1     # number of sentences beam decoder decode for one input, must be 1 (eval.translate_indices)
-eval_batch_size = 4    # 16
-test_batch_size = 4
+eval_batch_size = 8    # 16
+test_batch_size = 8
 
 init_uniform_mag = 0.02
 init_normal_std = 1e-4
