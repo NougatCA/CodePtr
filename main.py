@@ -87,6 +87,6 @@ def _test(model):
 
 
 if __name__ == '__main__':
-    # best_model_dict = _train()
-    # _test(best_model_dict)
-    _test(os.path.join('20200526_095918', 'best_epoch-2_batch-1000.pt'))
+    best_model_dict = _train()
+    _test(best_model_dict)
+    # _test(os.path.join('20200526_095918', 'best_epoch-2_batch-1000.pt'))

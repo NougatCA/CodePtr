@@ -5,7 +5,7 @@ import logging
 
 
 # paths
-dataset_dir = 'dataset_mini/'
+dataset_dir = '../dataset/'
 
 if not os.path.exists(dataset_dir):
     raise Exception('Dataset directory not exist.')
@@ -95,20 +95,20 @@ max_code_length = 200
 max_nl_length = 30
 min_nl_length = 4
 max_decode_steps = 30
-early_stopping_patience = 10
+early_stopping_patience = 20
 
 
 # hyperparameters
 vocab_min_count = 5
-source_vocab_size = 6000
-code_vocab_size = 6000  # 30000
-nl_vocab_size = 6000    # 30000
+source_vocab_size = 30000
+code_vocab_size = 30000  # 30000
+nl_vocab_size = 30000    # 30000
 
 embedding_dim = 256
 hidden_size = 256
 decoder_dropout_rate = 0.5
 teacher_forcing_ratio = 0.5
-batch_size = 8     # 128
+batch_size = 32     # 128
 source_encoder_lr = 0.001
 code_encoder_lr = 0.001
 ast_encoder_lr = 0.001
@@ -116,12 +116,12 @@ reduce_hidden_lr = 0.001
 decoder_lr = 0.001
 lr_decay_every = 1
 lr_decay_rate = 0.99
-n_epochs = 3    # 50
+n_epochs = 30    # 50
 
 beam_width = 5
 beam_top_sentences = 1     # number of sentences beam decoder decode for one input, must be 1 (eval.translate_indices)
-eval_batch_size = 8    # 16
-test_batch_size = 8
+eval_batch_size = 32    # 16
+test_batch_size = 16
 
 init_uniform_mag = 0.02
 init_normal_std = 1e-4
@@ -129,11 +129,11 @@ eps = 1e-12
 
 
 # visualization and resumes
-print_every = 100  # 1000
+print_every = 200  # 1000
 plot_every = 10     # 100
 save_model_every = 20   # 2000
 save_check_point_every = 10   # 1000
-validate_every = 500     # 2000
+validate_every = 5000     # 2000
 
 # save config to log
 save_config = True
