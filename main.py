@@ -44,6 +44,7 @@ def _train(vocab_file_path=None, model_file_path=None):
     config.logger.info('Size of train dataset:{}'.format(train_instance.train_dataset_size))
     config.logger.info('Size of source code vocabulary: {} -> {}'.format(
         train_instance.origin_source_vocab_size, train_instance.source_vocab_size))
+    config.logger.info('Source source code OOV rate: {:.2f}%'.format(source_oov_rate * 100))
     config.logger.info('Size of tokenized source code vocabulary: {} -> {}'.format(
         train_instance.origin_code_vocab_size, train_instance.code_vocab_size))
     config.logger.info('Source code OOV rate: {:.2f}%'.format(code_oov_rate * 100))

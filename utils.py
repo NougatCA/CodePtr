@@ -213,7 +213,7 @@ def load_dataset(dataset_path) -> list:
     lines = []
     with open(dataset_path, 'r', encoding='utf-8') as file:
         for line in file.readlines():
-            words = line.strip().split(' ')
+            words = line.lower().strip().split(' ')
             lines.append(words)
     return lines
 

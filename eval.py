@@ -510,10 +510,12 @@ class Test(object):
                         oov_index = index - self.nl_vocab_size  # oov temp index
                         try:
                             word = oovs[oov_index]
+                            config.logger.info('Pointed OOV word: {}'.format(word))
                         except IndexError:
-                            raise IndexError('Error: model produced word id', index,
-                                             'which is corresponding to an OOV word index', oov_index,
-                                             'but this sample only has {} OOV words.'.format(len(oovs)))
+                            # raise IndexError('Error: model produced word id', index,
+                            #                  'which is corresponding to an OOV word index', oov_index,
+                            #                  'but this sample only has {} OOV words.'.format(len(oovs)))
+                            word = '<UNK>'
                     else:
                         word = self.nl_vocab.index2word[index]
                     if utils.is_unk(word) or not utils.is_special_symbol(word):

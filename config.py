@@ -100,9 +100,9 @@ early_stopping_patience = 20
 
 # hyperparameters
 vocab_min_count = 5
-source_vocab_size = 30000
-code_vocab_size = 30000  # 30000
-nl_vocab_size = 30000    # 30000
+source_vocab_size = 5000
+code_vocab_size = 5000  # 30000
+nl_vocab_size = 5000    # 30000
 
 embedding_dim = 256
 hidden_size = 256
