@@ -5,7 +5,7 @@ import logging
 
 
 # paths
-dataset_dir = '../dataset/'
+dataset_dir = 'dataset_mini/'
 
 if not os.path.exists(dataset_dir):
     raise Exception('Dataset directory not exist.')
@@ -100,22 +100,22 @@ early_stopping_patience = 20
 
 # hyperparameters
 vocab_min_count = 5
-source_vocab_size = 5000
-code_vocab_size = 5000  # 30000
-nl_vocab_size = 5000    # 30000
+source_vocab_size = 30000
+code_vocab_size = 30000  # 30000
+nl_vocab_size = 30000    # 30000
 
 embedding_dim = 256
 hidden_size = 256
 decoder_dropout_rate = 0.5
 teacher_forcing_ratio = 0.5
 batch_size = 32     # 128
-source_encoder_lr = 0.001
-code_encoder_lr = 0.001
-ast_encoder_lr = 0.001
-reduce_hidden_lr = 0.001
-decoder_lr = 0.001
+source_encoder_lr = 0.1
+code_encoder_lr = 0.1
+ast_encoder_lr = 0.1
+reduce_hidden_lr = 0.1
+decoder_lr = 0.1
 lr_decay_every = 1
-lr_decay_rate = 0.99
+lr_decay_rate = 0.1
 n_epochs = 30    # 50
 
 beam_width = 5

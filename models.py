@@ -272,7 +272,7 @@ class Decoder(nn.Module):
 
         final_dist = torch.log(final_dist + config.eps)
 
-        return final_dist, hidden, source_attn_weights, code_attn_weights, ast_attn_weights, coverage
+        return final_dist, hidden, source_attn_weights, code_attn_weights, ast_attn_weights, coverage, p_gen
 
 
 class Model(nn.Module):
@@ -370,14 +370,14 @@ class Model(nn.Module):
             # decoder_hidden: [1, B, H]
             # attn_weights: [B, 1, T]
             decoder_output, decoder_hidden, source_attn_weights, code_attn_weights, ast_attn_weights, \
-                next_coverage = self.decoder(inputs=decoder_inputs,
-                                             last_hidden=decoder_hidden,
-                                             source_outputs=source_outputs,
-                                             code_outputs=code_outputs,
-                                             ast_outputs=ast_outputs,
-                                             extend_source_batch=extend_source_batch,
-                                             extra_zeros=extra_zeros,
-                                             coverage=coverage)
+                next_coverage, _ = self.decoder(inputs=decoder_inputs,
+                                                last_hidden=decoder_hidden,
+                                                source_outputs=source_outputs,
+                                                code_outputs=code_outputs,
+                                                ast_outputs=ast_outputs,
+                                                extend_source_batch=extend_source_batch,
+                                                extra_zeros=extra_zeros,
+                                                coverage=coverage)
             decoder_outputs[step] = decoder_output
 
             if config.use_teacher_forcing and random.random() < config.teacher_forcing_ratio and not self.is_eval:

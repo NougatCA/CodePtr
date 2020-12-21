@@ -3,6 +3,7 @@ import os
 import config
 import train
 import eval
+import predict
 
 
 def _train(vocab_file_path=None, model_file_path=None):
@@ -87,7 +88,26 @@ def _test(model):
     print('Testing is done.')
 
 
+def _predict(model):
+    print('\nInitializing the predict environments......')
+    predict_instance = predict.Predict(model)
+    print('Environments built successfully.\n')
+    predict_instance.run_predict()
+
+
 if __name__ == '__main__':
     best_model_dict = _train()
     _test(best_model_dict)
-    # _test(os.path.join('20200526_095918', 'best_epoch-2_batch-1000.pt'))
+    # # _test(os.path.join('20200604_230516', 'model_valid-loss-3.2370_epoch-1_batch--1.pt'))
+    # _predict('model_valid-loss-3.3545_epoch-1_batch--1.pt')
+
+    # import models
+    #
+    # model = models.Model(source_vocab_size=30000,
+    #                      code_vocab_size=30000,
+    #                      ast_vocab_size=58,
+    #                      nl_vocab_size=20000)
+    # total_1 = sum([param.nelement() for param in model.parameters()])
+    # total_2 = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    # print('  + Number of params: %.2fM' % (total_1 / 1e6))
+    # print('  + Number of params: %.2fM' % (total_2 / 1e6))

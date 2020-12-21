@@ -443,14 +443,14 @@ class Test(object):
                 # attn_weights: [B, 1, T]
                 # coverage: [B, T]
                 decoder_outputs, new_decoder_hidden, source_attn_weights, code_attn_weights, ast_attn_weights, \
-                    next_coverage = self.model.decoder(inputs=feed_inputs,
-                                                       last_hidden=feed_hidden,
-                                                       source_outputs=feed_source_outputs,
-                                                       code_outputs=feed_code_outputs,
-                                                       ast_outputs=feed_ast_outputs,
-                                                       extend_source_batch=feed_extend_source,
-                                                       extra_zeros=feed_extra_zeros,
-                                                       coverage=feed_coverage)
+                    next_coverage, _ = self.model.decoder(inputs=feed_inputs,
+                                                          last_hidden=feed_hidden,
+                                                          source_outputs=feed_source_outputs,
+                                                          code_outputs=feed_code_outputs,
+                                                          ast_outputs=feed_ast_outputs,
+                                                          extend_source_batch=feed_extend_source,
+                                                          extra_zeros=feed_extra_zeros,
+                                                          coverage=feed_coverage)
 
                 # get top k words
                 # log_probs: [B, beam_width]

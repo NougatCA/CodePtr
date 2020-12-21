@@ -109,6 +109,10 @@ class Train(object):
             {'params': self.model.decoder.parameters(), 'lr': config.decoder_lr},
         ], betas=(0.9, 0.999), eps=1e-08, weight_decay=0, amsgrad=False)
 
+        if model_file_path:
+            state = torch.load(model_file_path)
+            self.optimizer.load_state_dict(state['optimizer'])
+
         if config.use_lr_decay:
             self.lr_scheduler = lr_scheduler.StepLR(self.optimizer,
                                                     step_size=config.lr_decay_every,
